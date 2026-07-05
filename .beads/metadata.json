@@ -1,0 +1,7 @@
+{
+  "database": "dolt",
+  "backend": "dolt",
+  "dolt_mode": "embedded",
+  "dolt_database": "mastra_discord",
+  "project_id": "de86a372-d515-4866-8cce-94a34848ac0a"
+}
