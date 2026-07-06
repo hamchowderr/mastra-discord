@@ -1,6 +1,10 @@
+import { generateKeyPairSync, sign } from 'node:crypto'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { MockAgent, setGlobalDispatcher } from 'undici'
 import { InMemoryChannelsStorage } from '@mastra/core/storage'
+import { Mastra } from '@mastra/core'
+import { Agent } from '@mastra/core/agent'
+import { createMockModel } from '@mastra/core/test-utils/llm-mock'
 import {
   DEFAULT_COMMANDS,
   DiscordProvider,
@@ -86,8 +90,14 @@ describe('DiscordProvider — discovery + skeleton', () => {
     expect(provider.getInfo().isConfigured).toBe(false)
   })
 
-  it('mounts no routes yet (route mounting lands in mastra-discord-13x.3)', () => {
-    expect(makeProvider().provider.getRoutes()).toEqual([])
+  it('mounts a single POST interactions route (requiresAuth false — Ed25519, not bearer)', () => {
+    const routes = makeProvider().provider.getRoutes()
+    expect(routes).toHaveLength(1)
+    expect(routes[0]).toMatchObject({
+      path: '/discord/events/:webhookId',
+      method: 'POST',
+      requiresAuth: false,
+    })
   })
 })
 
@@ -300,15 +310,21 @@ describe('normalizeCommands', () => {
   })
 })
 
-describe('resolveDiscordAdapterConfig (stream binding)', () => {
-  it("enables streaming + typing and defaults toolDisplay to 'cards' (Discord has native embeds)", () => {
-    expect(resolveDiscordAdapterConfig({})).toEqual({ streaming: true, typingStatus: true, toolDisplay: 'cards' })
+describe('resolveDiscordAdapterConfig (stream binding + gateway)', () => {
+  it("enables streaming + typing + gateway and defaults toolDisplay to 'cards' (native embeds)", () => {
+    expect(resolveDiscordAdapterConfig({})).toEqual({
+      streaming: true,
+      typingStatus: true,
+      toolDisplay: 'cards',
+      gateway: true,
+    })
   })
 
   it('respects explicit overrides', () => {
     expect(resolveDiscordAdapterConfig({ streaming: false })).toMatchObject({ streaming: false })
     expect(resolveDiscordAdapterConfig({ typingStatus: false })).toMatchObject({ typingStatus: false })
     expect(resolveDiscordAdapterConfig({ toolDisplay: 'text' })).toMatchObject({ toolDisplay: 'text' })
+    expect(resolveDiscordAdapterConfig({ gateway: false })).toMatchObject({ gateway: false })
   })
 })
 
@@ -318,5 +334,134 @@ describe('crypto (bot-token at rest)', () => {
     expect(isEncrypted(enc)).toBe(true)
     expect(decrypt(enc, 'pass')).toBe(APP.botToken)
     expect(decrypt(APP.botToken, 'pass')).toBe(APP.botToken)
+  })
+})
+
+describe('DiscordProvider — interactions route (raw-body → adapter.handleWebhook)', () => {
+  /** An Ed25519 keypair; `publicKeyHex` goes in the app config, `privateKey` signs requests. */
+  function makeKeypair() {
+    const { publicKey, privateKey } = generateKeyPairSync('ed25519')
+    const jwk = publicKey.export({ format: 'jwk' }) as { x: string }
+    return { privateKey, publicKeyHex: Buffer.from(jwk.x, 'base64url').toString('hex') }
+  }
+
+  /** Hono-ish context carrying a real interaction as the RAW request body + signature headers. */
+  function makeCtx(webhookId: string | undefined, headers: Record<string, string>, body: string) {
+    const lower = Object.fromEntries(Object.entries(headers).map(([k, v]) => [k.toLowerCase(), v]))
+    return {
+      req: {
+        param: (k: string) => (k === 'webhookId' ? webhookId : undefined),
+        header: (k: string) => lower[k.toLowerCase()],
+        raw: new Request(`https://app.example.com/discord/events/${webhookId}`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', ...headers },
+          body,
+        }),
+      },
+      json: (b: unknown, status = 200) =>
+        new Response(JSON.stringify(b), { status, headers: { 'content-type': 'application/json' } }),
+    }
+  }
+
+  /** Sign `timestamp + body` the way Discord does (Ed25519 over the raw bytes). */
+  function signed(privateKey: ReturnType<typeof makeKeypair>['privateKey'], timestamp: string, body: string) {
+    return sign(null, Buffer.from(timestamp + body), privateKey).toString('hex')
+  }
+
+  const stubMastra = { getAgentById: () => undefined, getStorage: () => undefined, getServer: () => undefined }
+
+  /** A connected (pending) provider whose app public key matches `privateKey`, plus its route handler. */
+  async function connectedHandler() {
+    const { privateKey, publicKeyHex } = makeKeypair()
+    const provider = new DiscordProvider({
+      storage: new InMemoryChannelsStorage(),
+      app: { ...APP, publicKey: publicKeyHex },
+    })
+    stubValidateApp()
+    await provider.connect('agent-1')
+    const install = await provider.getInstallation('agent-1')
+    const route = provider.getRoutes()[0]
+    if (!('createHandler' in route)) throw new Error('expected a createHandler route')
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const handler = await route.createHandler({ mastra: stubMastra as any })
+    return { handler, privateKey, webhookId: install!.webhookId }
+  }
+
+  it('404s an unknown webhookId', async () => {
+    const { handler } = await connectedHandler()
+    const res = await handler(makeCtx('does-not-exist', {}, '{}'))
+    expect(res.status).toBe(404)
+  })
+
+  it('passes RAW bytes through: a validly-signed PING returns a type-1 PONG', async () => {
+    const { handler, privateKey, webhookId } = await connectedHandler()
+    const body = JSON.stringify({ type: 1 })
+    const timestamp = '1700000000'
+    const ctx = makeCtx(webhookId, {
+      'x-signature-ed25519': signed(privateKey, timestamp, body),
+      'x-signature-timestamp': timestamp,
+    }, body)
+
+    const res = await handler(ctx)
+    expect(res.status).toBe(200)
+    expect(await res.json()).toMatchObject({ type: 1 })
+  })
+
+  it('rejects a bad Ed25519 signature with 401 (adapter verified the raw bytes)', async () => {
+    const { handler, webhookId } = await connectedHandler()
+    const body = JSON.stringify({ type: 1 })
+    const ctx = makeCtx(webhookId, {
+      'x-signature-ed25519': '00'.repeat(64),
+      'x-signature-timestamp': '1700000000',
+    }, body)
+
+    const res = await handler(ctx)
+    expect(res.status).toBe(401)
+  })
+})
+
+describe('DiscordProvider — AgentChannels wiring (parity with @mastra/slack)', () => {
+  // gateway:false keeps these fully in-process (no real Gateway WebSocket).
+  it('forwards the curated ChannelConfig subset + adapter overrides, gateway forwarded', async () => {
+    const agent = new Agent({ id: 'cfg-agent', name: 'cfg-agent', instructions: 'x', model: createMockModel({ mockText: 'x' }) })
+    const storage = new InMemoryChannelsStorage()
+    const handlers = { onDirectMessage: async () => {} }
+    const inlineMedia = ['image/png', 'image/jpeg']
+    const threadContext = { maxMessages: 5 }
+    const cors = { origin: 'https://example.com' }
+    const formatError = (e: Error) => `oops: ${e.message}`
+
+    const provider = new DiscordProvider({
+      storage,
+      app: APP,
+      gateway: false,
+      handlers,
+      inlineMedia,
+      threadContext,
+      cors,
+      formatError,
+    })
+    const mastra = new Mastra({ agents: { 'cfg-agent': agent }, channels: { discord: provider } })
+    expect(mastra).toBeDefined()
+
+    stubValidateApp()
+    stubGuild(GUILD, true)
+    await provider.connect('cfg-agent', { guildId: GUILD })
+
+    const cc = agent.getChannels()!.channelConfig
+    // Channel-level options
+    expect(cc.handlers).toBe(handlers)
+    expect(cc.inlineMedia).toEqual(inlineMedia)
+    expect(cc.threadContext).toEqual(threadContext)
+    // Adapter-entry-level options + the stream/gateway binding
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const entry = cc.adapters.discord as any
+    expect(entry.cors).toEqual(cors)
+    expect(entry.formatError).toBe(formatError)
+    expect(entry.streaming).toBe(true)
+    expect(entry.typingStatus).toBe(true)
+    expect(entry.toolDisplay).toBe('cards')
+    expect(entry.gateway).toBe(false)
+    expect(provider.getAdapter((await provider.getInstallation('cfg-agent'))!.id)).toBeDefined()
   })
 })

@@ -20,6 +20,6 @@ export type {
   DiscordCommandInput,
 } from './types'
 
-// Note: the underlying adapter (`createDiscordAdapter`/`DiscordAdapter`) is
-// re-exported alongside route mounting + the dual ESM/CJS build in issue
-// `mastra-discord-13x.3`, where the adapter is first wired.
+// Re-export the underlying adapter for convenience (parity with @mastra/slack).
+export { createDiscordAdapter, DiscordAdapter } from '@chat-adapter/discord'
+export type { DiscordAdapterConfig } from '@chat-adapter/discord'

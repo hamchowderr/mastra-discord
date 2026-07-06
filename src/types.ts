@@ -6,6 +6,7 @@ import type {
   WaitUntilFn,
 } from '@mastra/core/channels'
 import type { ChannelsStorage } from '@mastra/core/storage'
+import type { DiscordAdapterConfig } from '@chat-adapter/discord'
 
 /** Default Discord REST API origin (versioned base is appended by the client). */
 export const DISCORD_API_BASE_URL = 'https://discord.com/api/v10'
@@ -144,6 +145,19 @@ export interface DiscordProviderConfig {
    * @default true
    */
   gateway?: boolean
+  /**
+   * Role IDs (in addition to direct user mentions) that trigger mention
+   * handlers. Forwarded to the adapter (`DISCORD_MENTION_ROLE_IDS` env fallback).
+   */
+  mentionRoleIds?: string[]
+  /**
+   * Return interaction response flags (e.g. ephemeral, flag 64) for the initial
+   * deferred slash-command response. Flags are locked at defer time, so this
+   * fires on the deferred ACK, not the followup. Forwarded to the adapter.
+   */
+  interactionFlags?: DiscordAdapterConfig['interactionFlags']
+  /** Logger forwarded to the underlying `DiscordAdapter` for internal error reporting. */
+  logger?: DiscordAdapterConfig['logger']
   /**
    * Stream agent text to Discord as it generates, via the adapter's post-and-edit
    * (`editMessage`) loop. Discord has no native token streaming, so this
