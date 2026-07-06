@@ -1,0 +1,322 @@
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { MockAgent, setGlobalDispatcher } from 'undici'
+import { InMemoryChannelsStorage } from '@mastra/core/storage'
+import {
+  DEFAULT_COMMANDS,
+  DiscordProvider,
+  buildInviteUrl,
+  decrypt,
+  encrypt,
+  isEncrypted,
+  normalizeCommands,
+  resolveDiscordAdapterConfig,
+} from '../src/index'
+
+const API_ORIGIN = 'https://discord.com'
+const APP = {
+  botToken: 'bot-token-abcdef',
+  publicKey: '0123456789abcdef',
+  applicationId: '111111111111111111',
+}
+const GUILD = '222222222222222222'
+const OTHER_GUILD = '333333333333333333'
+
+let mockAgent: MockAgent
+/** Saved DISCORD_* env so a real machine's creds can't leak into the tests. */
+let savedEnv: Record<string, string | undefined>
+
+beforeEach(() => {
+  mockAgent = new MockAgent()
+  mockAgent.disableNetConnect()
+  setGlobalDispatcher(mockAgent)
+  savedEnv = {
+    DISCORD_BOT_TOKEN: process.env.DISCORD_BOT_TOKEN,
+    DISCORD_PUBLIC_KEY: process.env.DISCORD_PUBLIC_KEY,
+    DISCORD_APPLICATION_ID: process.env.DISCORD_APPLICATION_ID,
+  }
+  delete process.env.DISCORD_BOT_TOKEN
+  delete process.env.DISCORD_PUBLIC_KEY
+  delete process.env.DISCORD_APPLICATION_ID
+})
+
+afterEach(async () => {
+  await mockAgent.close()
+  Object.assign(process.env, savedEnv)
+})
+
+/** Fresh provider + its own in-memory storage (returned so tests can inspect it). */
+function makeProvider(config: Partial<ConstructorParameters<typeof DiscordProvider>[0]> = {}) {
+  const storage = new InMemoryChannelsStorage()
+  const provider = new DiscordProvider({ storage, app: APP, ...config })
+  return { provider, storage }
+}
+
+/** Stub `GET /applications/@me` — the bot-token validation call. */
+function stubValidateApp(opts: { ok?: boolean; name?: string } = {}) {
+  const { ok = true, name = 'Test App' } = opts
+  mockAgent
+    .get(API_ORIGIN)
+    .intercept({ path: '/api/v10/applications/@me', method: 'GET' })
+    .reply(ok ? 200 : 401, ok ? { id: APP.applicationId, name } : { message: '401: Unauthorized', code: 0 })
+}
+
+/** Stub `GET /guilds/{id}` —200 when the bot is a member, 403 otherwise. */
+function stubGuild(guildId: string, present: boolean) {
+  mockAgent
+    .get(API_ORIGIN)
+    .intercept({ path: `/api/v10/guilds/${guildId}`, method: 'GET' })
+    .reply(present ? 200 : 403, present ? { id: guildId, name: 'Test Guild' } : { message: 'Missing Access', code: 50001 })
+}
+
+describe('DiscordProvider — discovery + skeleton', () => {
+  it('exposes the discord channel id', () => {
+    expect(makeProvider().provider.id).toBe('discord')
+  })
+
+  it('reports discovery metadata (configured once app creds are present)', () => {
+    expect(makeProvider().provider.getInfo()).toMatchObject({
+      id: 'discord',
+      name: 'Discord',
+      isConfigured: true,
+    })
+  })
+
+  it('is not configured without app credentials', () => {
+    const provider = new DiscordProvider({ storage: new InMemoryChannelsStorage() })
+    expect(provider.getInfo().isConfigured).toBe(false)
+  })
+
+  it('mounts no routes yet (route mounting lands in mastra-discord-13x.3)', () => {
+    expect(makeProvider().provider.getRoutes()).toEqual([])
+  })
+})
+
+describe('DiscordProvider.connect', () => {
+  it('throws when the app is not configured (Dev Portal only — no programmatic app creation)', async () => {
+    const provider = new DiscordProvider({ storage: new InMemoryChannelsStorage() })
+    await expect(provider.connect('agent-1')).rejects.toThrow(/not configured/i)
+  })
+
+  it('returns the OAuth2 bot-invite URL and a pending install when no guild is bound', async () => {
+    const { provider } = makeProvider()
+    stubValidateApp()
+
+    const result = await provider.connect('agent-1')
+
+    expect(result).toMatchObject({ type: 'oauth' })
+    const url = new URL((result as { authorizationUrl: string }).authorizationUrl)
+    expect(url.origin + url.pathname).toBe('https://discord.com/oauth2/authorize')
+    expect(url.searchParams.get('client_id')).toBe(APP.applicationId)
+    expect(url.searchParams.get('scope')).toBe('bot applications.commands')
+    expect(BigInt(url.searchParams.get('permissions')!)).toBeGreaterThan(0n)
+
+    const installs = await provider.listInstallations()
+    expect(installs).toHaveLength(1)
+    expect(installs[0]).toMatchObject({ agentId: 'agent-1', platform: 'discord', status: 'pending' })
+    expect(provider.getInfo().isConfigured).toBe(true)
+  })
+
+  it('validates the bot token via /applications/@me and persists nothing on rejection', async () => {
+    const { provider, storage } = makeProvider()
+    stubValidateApp({ ok: false })
+
+    await expect(provider.connect('agent-1')).rejects.toThrow(/rejected the bot token/i)
+    expect(await provider.listInstallations()).toHaveLength(0)
+    // Invalid token ⇒ app config must not be persisted either.
+    expect(await storage.getConfig('discord')).toBeNull()
+  })
+
+  it('binds immediately when the bot is already in the target guild', async () => {
+    const { provider } = makeProvider()
+    stubValidateApp()
+    stubGuild(GUILD, true)
+
+    const result = await provider.connect('agent-1', { guildId: GUILD })
+
+    expect(result).toMatchObject({ type: 'immediate' })
+    const inst = await provider.getInstallation('agent-1')
+    expect(inst).toMatchObject({ status: 'active', guildIds: [GUILD] })
+  })
+
+  it('falls back to the invite URL when the bot is not yet in the target guild', async () => {
+    const { provider } = makeProvider()
+    stubValidateApp()
+    stubGuild(GUILD, false)
+
+    const result = await provider.connect('agent-1', { guildId: GUILD })
+
+    expect(result).toMatchObject({ type: 'oauth' })
+    const inst = await provider.getInstallation('agent-1')
+    expect(inst).toMatchObject({ status: 'pending', guildIds: [] })
+  })
+
+  it('enforces one active install per agent (reconnect requires disconnect)', async () => {
+    const { provider } = makeProvider()
+    stubValidateApp()
+    stubGuild(GUILD, true)
+    await provider.connect('agent-1', { guildId: GUILD })
+
+    await expect(provider.connect('agent-1')).rejects.toThrow(/already connected/i)
+  })
+
+  it('never leaks secrets in listInstallations()', async () => {
+    const { provider } = makeProvider()
+    stubValidateApp()
+    await provider.connect('agent-1')
+
+    const installs = await provider.listInstallations()
+    const json = JSON.stringify(installs)
+    expect(json).not.toContain(APP.botToken)
+    expect(json).not.toContain(APP.publicKey)
+  })
+})
+
+describe('DiscordProvider — one app, many guilds (app secrets stored once)', () => {
+  it('stores app creds once; a second agent connects with no creds supplied', async () => {
+    const storage = new InMemoryChannelsStorage()
+    // First provider carries the creds and persists them.
+    const p1 = new DiscordProvider({ storage, app: APP })
+    stubValidateApp()
+    await p1.connect('agent-1')
+
+    // Second provider shares storage but is given NO creds — reads the stored app.
+    const p2 = new DiscordProvider({ storage })
+    stubValidateApp()
+    const result = await p2.connect('agent-2')
+    expect(result).toMatchObject({ type: 'oauth' })
+    expect((await p2.listInstallations()).map((i) => i.agentId).sort()).toEqual(['agent-1', 'agent-2'])
+  })
+
+  it('encrypts the stored bot token at rest when an encryptionKey is set', async () => {
+    const storage = new InMemoryChannelsStorage()
+    const provider = new DiscordProvider({ storage, app: APP, encryptionKey: 'super-secret-passphrase' })
+    stubValidateApp()
+    await provider.connect('agent-1')
+
+    const config = await storage.getConfig('discord')
+    const stored = (config?.data as { botToken?: string; applicationId?: string })
+    expect(stored.botToken).toBeDefined()
+    expect(stored.botToken).not.toBe(APP.botToken)
+    expect(isEncrypted(stored.botToken!)).toBe(true)
+    // applicationId is public — stored in the clear.
+    expect(stored.applicationId).toBe(APP.applicationId)
+  })
+})
+
+describe('DiscordProvider.activateGuild — lazy activation (first interaction)', () => {
+  it('flips a pending install to active and records the guild, calling onInstall once', async () => {
+    const seen: string[] = []
+    const { provider } = makeProvider({ onInstall: (i) => void seen.push(i.agentId) })
+    stubValidateApp()
+    await provider.connect('agent-1')
+    const pending = await provider.getInstallation('agent-1')
+    expect(pending?.status).toBe('pending')
+
+    const activated = await provider.activateGuild(pending!.webhookId, GUILD)
+    expect(activated).toMatchObject({ status: 'active', guildIds: [GUILD] })
+    expect(seen).toEqual(['agent-1'])
+
+    // Re-activation with another guild appends without re-firing onInstall.
+    const again = await provider.activateGuild(pending!.webhookId, OTHER_GUILD)
+    expect(again?.guildIds).toEqual([GUILD, OTHER_GUILD])
+    expect(seen).toEqual(['agent-1'])
+  })
+
+  it('returns null for an unknown webhookId', async () => {
+    const { provider } = makeProvider()
+    expect(await provider.activateGuild('no-such-webhook', GUILD)).toBeNull()
+  })
+
+  it('makes the install discoverable by guildId (tenancy key)', async () => {
+    const { provider, storage } = makeProvider({ encryptionKey: 'k' })
+    stubValidateApp()
+    await provider.connect('agent-1')
+    const pending = await provider.getInstallation('agent-1')
+    await provider.activateGuild(pending!.webhookId, GUILD)
+
+    // Reach the store the same way the route (mastra-discord-13x.3) will.
+    const { DiscordInstallStore } = await import('../src/install-store')
+    const store = new DiscordInstallStore(storage, 'k')
+    const byGuild = await store.getByGuildId(GUILD)
+    expect(byGuild?.agentId).toBe('agent-1')
+  })
+})
+
+describe('DiscordProvider.disconnect', () => {
+  it('removes the installation', async () => {
+    const { provider } = makeProvider()
+    stubValidateApp()
+    stubGuild(GUILD, true)
+    await provider.connect('agent-1', { guildId: GUILD })
+
+    await provider.disconnect('agent-1')
+    expect(await provider.listInstallations()).toHaveLength(0)
+    // App config persists (one app, many guilds) → still configured.
+    expect(provider.isConfigured()).toBe(true)
+  })
+
+  it('throws when no installation exists', async () => {
+    await expect(makeProvider().provider.disconnect('ghost')).rejects.toThrow(/no discord installation/i)
+  })
+})
+
+describe('buildInviteUrl', () => {
+  it('builds an OAuth2 authorize URL with bot + applications.commands scopes', () => {
+    const url = new URL(buildInviteUrl({ applicationId: APP.applicationId }))
+    expect(url.searchParams.get('client_id')).toBe(APP.applicationId)
+    expect(url.searchParams.get('scope')).toBe('bot applications.commands')
+    expect(BigInt(url.searchParams.get('permissions')!)).toBeGreaterThan(0n)
+  })
+
+  it('honors an explicit permissions bitfield', () => {
+    const url = new URL(buildInviteUrl({ applicationId: APP.applicationId, permissions: 8n }))
+    expect(url.searchParams.get('permissions')).toBe('8')
+  })
+})
+
+describe('normalizeCommands', () => {
+  it('lowercases, strips the leading slash, and defaults the description', () => {
+    expect(normalizeCommands(['/Help'])).toEqual([{ name: 'help', description: 'Run /help' }])
+  })
+
+  it('keeps dashes (Discord allows them), drops other invalid chars, clamps to 32', () => {
+    const [cmd] = normalizeCommands([{ name: 'My-Cmd!', description: 'x' }])
+    expect(cmd.name).toBe('my-cmd')
+    const [long] = normalizeCommands(['a'.repeat(40)])
+    expect(long.name).toHaveLength(32)
+  })
+
+  it('drops empties and duplicates', () => {
+    expect(normalizeCommands(['/', 'help', 'help'])).toEqual([{ name: 'help', description: 'Run /help' }])
+  })
+
+  it('clamps descriptions to 100 chars', () => {
+    const [cmd] = normalizeCommands([{ name: 'x', description: 'd'.repeat(200) }])
+    expect(cmd.description).toHaveLength(100)
+  })
+
+  it('normalizes the default seed', () => {
+    expect(normalizeCommands(DEFAULT_COMMANDS).map((c) => c.name)).toEqual(['help'])
+  })
+})
+
+describe('resolveDiscordAdapterConfig (stream binding)', () => {
+  it("enables streaming + typing and defaults toolDisplay to 'cards' (Discord has native embeds)", () => {
+    expect(resolveDiscordAdapterConfig({})).toEqual({ streaming: true, typingStatus: true, toolDisplay: 'cards' })
+  })
+
+  it('respects explicit overrides', () => {
+    expect(resolveDiscordAdapterConfig({ streaming: false })).toMatchObject({ streaming: false })
+    expect(resolveDiscordAdapterConfig({ typingStatus: false })).toMatchObject({ typingStatus: false })
+    expect(resolveDiscordAdapterConfig({ toolDisplay: 'text' })).toMatchObject({ toolDisplay: 'text' })
+  })
+})
+
+describe('crypto (bot-token at rest)', () => {
+  it('round-trips a value and passes plaintext through', () => {
+    const enc = encrypt(APP.botToken, 'pass')
+    expect(isEncrypted(enc)).toBe(true)
+    expect(decrypt(enc, 'pass')).toBe(APP.botToken)
+    expect(decrypt(APP.botToken, 'pass')).toBe(APP.botToken)
+  })
+})

@@ -1,0 +1,39 @@
+{
+  "name": "@mastra/discord",
+  "version": "0.0.0",
+  "description": "Discord channel wrapper for Mastra — a ChannelProvider over @chat-adapter/discord.",
+  "type": "module",
+  "private": true,
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      }
+    }
+  },
+  "files": ["dist"],
+  "scripts": {
+    "build": "tsup",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "@chat-adapter/discord": "^4.32.0"
+  },
+  "peerDependencies": {
+    "@mastra/core": "^1.22.0"
+  },
+  "devDependencies": {
+    "@mastra/core": "^1.49.0",
+    "@types/node": "^22.0.0",
+    "tsup": "^8.5.1",
+    "typescript": "^5.7.0",
+    "undici": "^6.0.0",
+    "vitest": "^4.1.9"
+  }
+}
