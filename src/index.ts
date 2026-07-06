@@ -1,8 +1,15 @@
 export { DiscordProvider, resolveDiscordAdapterConfig } from './discord-provider'
 export { DiscordInstallStore, toInstallationInfo, PLATFORM } from './install-store'
-export { validateApp, guildHealthCheck, buildInviteUrl, discordRequest } from './discord-client'
+export {
+  validateApp,
+  guildHealthCheck,
+  buildInviteUrl,
+  registerGuildCommands,
+  registerGlobalCommands,
+  discordRequest,
+} from './discord-client'
 export type { DiscordApplication, BuildInviteUrlOptions } from './discord-client'
-export { DEFAULT_COMMANDS, normalizeCommands } from './commands'
+export { DEFAULT_COMMANDS, normalizeCommands, hashCommands } from './commands'
 export { encrypt, decrypt, isEncrypted } from './crypto'
 export {
   DISCORD_API_BASE_URL,

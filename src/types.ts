@@ -133,6 +133,16 @@ export interface DiscordProviderConfig {
    */
   commands?: DiscordCommandInput[]
   /**
+   * Where slash commands are registered:
+   * - `'guild'` (default) — per-guild (`PUT …/guilds/{id}/commands`), updates
+   *   instantly; registered on first-seen guild, keyed by a per-guild hash.
+   * - `'global'` — app-wide (`PUT …/commands`), eventually consistent; registered
+   *   once regardless of guild.
+   *
+   * @default 'guild'
+   */
+  commandScope?: 'guild' | 'global'
+  /**
    * Keep the serverless invocation alive while the agent stream runs after the
    * interaction is acked (Vercel/AWS Lambda). See `ChannelConfig.waitUntil`.
    */
@@ -264,10 +274,12 @@ export interface DiscordInstallation {
   guildIds: string[]
   /** Display name (application name or an operator-supplied override). */
   displayName?: string
+  /** Normalized slash commands to register for this agent (resolved at connect). */
+  commands?: DiscordCommand[]
   /**
-   * Per-guild registered-command version hash, keyed by `guildId`. Used to skip
-   * re-`PUT`ting commands when unchanged (200/day/guild rate limit). Populated in
-   * command registration (issue `mastra-discord-13x.4`).
+   * Registered-command version hash, keyed by `guildId` (guild scope) or the
+   * literal `'global'` (global scope). Used to skip re-`PUT`ting commands when
+   * unchanged (200/day/guild rate limit).
    */
   commandVersions?: Record<string, string>
   /** When the installation was created. */

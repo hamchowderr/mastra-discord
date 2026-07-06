@@ -1,6 +1,6 @@
 import type { ChannelInstallationInfo } from '@mastra/core/channels'
 import type { ChannelInstallation, ChannelsStorage } from '@mastra/core/storage'
-import type { DiscordAppConfig, DiscordInstallation } from './types'
+import type { DiscordAppConfig, DiscordCommand, DiscordInstallation } from './types'
 import { decrypt, encrypt } from './crypto'
 
 /** Platform identifier used for every stored record, config, and route. */
@@ -10,6 +10,7 @@ export const PLATFORM = 'discord'
 interface DiscordInstallationData {
   guildIds?: string[]
   displayName?: string
+  commands?: DiscordCommand[]
   commandVersions?: Record<string, string>
 }
 
@@ -124,6 +125,7 @@ export class DiscordInstallStore {
     const data: DiscordInstallationData = {
       guildIds: install.guildIds,
       displayName: install.displayName,
+      commands: install.commands,
       commandVersions: install.commandVersions,
     }
     return {
@@ -147,6 +149,7 @@ export class DiscordInstallStore {
       status: record.status === 'active' ? 'active' : 'pending',
       guildIds: data.guildIds ?? [],
       displayName: data.displayName,
+      commands: data.commands,
       commandVersions: data.commandVersions,
       installedAt: record.createdAt,
     }

@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import type { DiscordCommand, DiscordCommandInput } from './types'
 
 /**
@@ -36,4 +37,17 @@ export function normalizeCommands(raw: readonly DiscordCommandInput[] | undefine
     commands.push({ name, description })
   }
   return commands
+}
+
+/**
+ * Stable content hash of a normalized command list, used to skip re-`PUT`ting a
+ * guild/global command set that hasn't changed (Discord allows only 200
+ * application-command creates per day, per guild). Order-independent: commands
+ * are sorted by name before hashing.
+ */
+export function hashCommands(commands: readonly DiscordCommand[]): string {
+  const canonical = [...commands]
+    .sort((a, b) => a.name.localeCompare(b.name))
+    .map((c) => ({ name: c.name, description: c.description }))
+  return createHash('sha256').update(JSON.stringify(canonical)).digest('hex').slice(0, 16)
 }

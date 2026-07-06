@@ -11,6 +11,7 @@ import {
   buildInviteUrl,
   decrypt,
   encrypt,
+  hashCommands,
   isEncrypted,
   normalizeCommands,
   resolveDiscordAdapterConfig,
@@ -70,6 +71,34 @@ function stubGuild(guildId: string, present: boolean) {
     .get(API_ORIGIN)
     .intercept({ path: `/api/v10/guilds/${guildId}`, method: 'GET' })
     .reply(present ? 200 : 403, present ? { id: guildId, name: 'Test Guild' } : { message: 'Missing Access', code: 50001 })
+}
+
+/** Persistently stub the guild command PUT, capturing every payload. */
+function stubGuildCommands(guildId: string, appId: string = APP.applicationId): () => Record<string, unknown>[] {
+  const calls: Record<string, unknown>[] = []
+  mockAgent
+    .get(API_ORIGIN)
+    .intercept({ path: `/api/v10/applications/${appId}/guilds/${guildId}/commands`, method: 'PUT' })
+    .reply(200, (opts) => {
+      calls.push(JSON.parse(String(opts.body)))
+      return []
+    })
+    .persist()
+  return () => calls
+}
+
+/** Persistently stub the global command PUT, capturing every payload. */
+function stubGlobalCommands(appId: string = APP.applicationId): () => Record<string, unknown>[] {
+  const calls: Record<string, unknown>[] = []
+  mockAgent
+    .get(API_ORIGIN)
+    .intercept({ path: `/api/v10/applications/${appId}/commands`, method: 'PUT' })
+    .reply(200, (opts) => {
+      calls.push(JSON.parse(String(opts.body)))
+      return []
+    })
+    .persist()
+  return () => calls
 }
 
 describe('DiscordProvider — discovery + skeleton', () => {
@@ -140,12 +169,16 @@ describe('DiscordProvider.connect', () => {
     const { provider } = makeProvider()
     stubValidateApp()
     stubGuild(GUILD, true)
+    const commandCalls = stubGuildCommands(GUILD)
 
     const result = await provider.connect('agent-1', { guildId: GUILD })
 
     expect(result).toMatchObject({ type: 'immediate' })
     const inst = await provider.getInstallation('agent-1')
     expect(inst).toMatchObject({ status: 'active', guildIds: [GUILD] })
+    // Guild commands registered instantly on bind (default /help seed).
+    expect(commandCalls()).toHaveLength(1)
+    expect((commandCalls()[0] as unknown as { name: string }[]).map((c) => c.name)).toEqual(['help'])
   })
 
   it('falls back to the invite URL when the bot is not yet in the target guild', async () => {
@@ -164,6 +197,7 @@ describe('DiscordProvider.connect', () => {
     const { provider } = makeProvider()
     stubValidateApp()
     stubGuild(GUILD, true)
+    stubGuildCommands(GUILD)
     await provider.connect('agent-1', { guildId: GUILD })
 
     await expect(provider.connect('agent-1')).rejects.toThrow(/already connected/i)
@@ -257,6 +291,7 @@ describe('DiscordProvider.disconnect', () => {
     const { provider } = makeProvider()
     stubValidateApp()
     stubGuild(GUILD, true)
+    stubGuildCommands(GUILD)
     await provider.connect('agent-1', { guildId: GUILD })
 
     await provider.disconnect('agent-1')
@@ -325,6 +360,81 @@ describe('resolveDiscordAdapterConfig (stream binding + gateway)', () => {
     expect(resolveDiscordAdapterConfig({ typingStatus: false })).toMatchObject({ typingStatus: false })
     expect(resolveDiscordAdapterConfig({ toolDisplay: 'text' })).toMatchObject({ toolDisplay: 'text' })
     expect(resolveDiscordAdapterConfig({ gateway: false })).toMatchObject({ gateway: false })
+    expect(resolveDiscordAdapterConfig({ streaming: { updateIntervalMs: 800 } })).toMatchObject({
+      streaming: { updateIntervalMs: 800 },
+    })
+  })
+})
+
+describe('hashCommands', () => {
+  it('is stable and order-independent', () => {
+    expect(hashCommands(normalizeCommands(['a', 'b']))).toBe(hashCommands(normalizeCommands(['b', 'a'])))
+  })
+
+  it('changes when a command changes', () => {
+    expect(hashCommands(normalizeCommands(['a']))).not.toBe(hashCommands(normalizeCommands(['b'])))
+  })
+})
+
+describe('DiscordProvider — command registration (guild/global + hash skip)', () => {
+  it('registers guild commands lazily for each newly-seen guild', async () => {
+    const { provider } = makeProvider()
+    stubValidateApp()
+    const g1 = stubGuildCommands(GUILD)
+    const g2 = stubGuildCommands(OTHER_GUILD)
+
+    await provider.connect('agent-1') // oauth pending — no guild yet, so no PUT
+    expect(g1()).toHaveLength(0)
+
+    const inst = await provider.getInstallation('agent-1')
+    await provider.activateGuild(inst!.webhookId, GUILD)
+    expect(g1()).toHaveLength(1)
+    await provider.activateGuild(inst!.webhookId, OTHER_GUILD)
+    expect(g2()).toHaveLength(1)
+
+    const after = await provider.getInstallation('agent-1')
+    expect(Object.keys(after!.commandVersions ?? {}).sort()).toEqual([GUILD, OTHER_GUILD].sort())
+  })
+
+  it('skips re-registering a known guild whose commands are unchanged (rate-limit aware)', async () => {
+    const { provider } = makeProvider()
+    stubValidateApp()
+    stubGuild(GUILD, true)
+    const cmds = stubGuildCommands(GUILD)
+
+    await provider.connect('agent-1', { guildId: GUILD })
+    expect(cmds()).toHaveLength(1)
+
+    const inst = await provider.getInstallation('agent-1')
+    await provider.activateGuild(inst!.webhookId, GUILD) // already active + known → no PUT
+    expect(cmds()).toHaveLength(1)
+  })
+
+  it("registers global commands once when commandScope is 'global'", async () => {
+    const { provider } = makeProvider({ commandScope: 'global' })
+    stubValidateApp()
+    const g = stubGlobalCommands()
+
+    await provider.connect('agent-1') // global doesn't need a guild
+    expect(g()).toHaveLength(1)
+    const inst = await provider.getInstallation('agent-1')
+    expect(inst!.commandVersions?.global).toBeDefined()
+  })
+
+  it('registers a per-agent command override (normalized to CHAT_INPUT)', async () => {
+    const { provider } = makeProvider()
+    stubValidateApp()
+    stubGuild(GUILD, true)
+    const cmds = stubGuildCommands(GUILD)
+
+    await provider.connect('agent-1', {
+      guildId: GUILD,
+      commands: ['/ask', { name: 'summarize', description: 'Summarize a link' }],
+    })
+
+    const payload = cmds()[0] as unknown as { name: string; description: string; type: number }[]
+    expect(payload.map((c) => c.name)).toEqual(['ask', 'summarize'])
+    expect(payload.every((c) => c.type === 1)).toBe(true)
   })
 })
 
@@ -446,6 +556,7 @@ describe('DiscordProvider — AgentChannels wiring (parity with @mastra/slack)',
 
     stubValidateApp()
     stubGuild(GUILD, true)
+    stubGuildCommands(GUILD)
     await provider.connect('cfg-agent', { guildId: GUILD })
 
     const cc = agent.getChannels()!.channelConfig

@@ -15,7 +15,14 @@ import { InMemoryChannelsStorage } from '@mastra/core/storage'
 import type { ChannelsStorage } from '@mastra/core/storage'
 import { createDiscordAdapter } from '@chat-adapter/discord'
 import type { DiscordAdapter } from '@chat-adapter/discord'
-import { buildInviteUrl, guildHealthCheck, validateApp } from './discord-client'
+import {
+  buildInviteUrl,
+  guildHealthCheck,
+  registerGlobalCommands,
+  registerGuildCommands,
+  validateApp,
+} from './discord-client'
+import { DEFAULT_COMMANDS, hashCommands, normalizeCommands } from './commands'
 import { DiscordInstallStore, PLATFORM, toInstallationInfo } from './install-store'
 import { DEFAULT_INVITE_PERMISSIONS, DEFAULT_INVITE_SCOPES, DISCORD_API_BASE_URL } from './types'
 import type {
@@ -240,6 +247,7 @@ export class DiscordProvider implements ChannelProvider {
     const webhookId = existing?.webhookId ?? randomUUID()
     const displayName = options.name ?? identity.name
     const installedAt = existing?.installedAt ?? new Date()
+    const commands = normalizeCommands(options.commands ?? this.#config.commands ?? DEFAULT_COMMANDS)
 
     // Eager bind: the bot is already a member of the target guild.
     if (options.guildId && (await guildHealthCheck(app.botToken, options.guildId, this.#apiBaseUrl()))) {
@@ -250,10 +258,12 @@ export class DiscordProvider implements ChannelProvider {
         status: 'active',
         guildIds: [options.guildId],
         displayName,
+        commands: commands.length ? commands : undefined,
+        commandVersions: existing?.commandVersions,
         installedAt,
       }
-      // Command registration (guild-scoped + per-guild hashing): mastra-discord-13x.4.
       await store.save(installation)
+      await this.#registerCommands(app, installation, options.guildId)
       await this.#activateInstallation(installation)
       this.#configured = true
       await this.#config.onInstall?.(installation)
@@ -268,9 +278,14 @@ export class DiscordProvider implements ChannelProvider {
       status: 'pending',
       guildIds: existing?.guildIds ?? [],
       displayName,
+      commands: commands.length ? commands : undefined,
+      commandVersions: existing?.commandVersions,
       installedAt,
     }
     await store.save(pending)
+    // Global commands don't need a guild — register once now (best-effort).
+    // Guild commands wait for the first-seen guild (lazy activation).
+    await this.#registerCommands(app, pending)
     this.#configured = true
     const authorizationUrl = buildInviteUrl({
       applicationId: app.applicationId,
@@ -297,8 +312,10 @@ export class DiscordProvider implements ChannelProvider {
 
     if (!known) installation.guildIds.push(guildId)
     installation.status = 'active'
-    // Command registration for the newly-seen guild: mastra-discord-13x.4.
     await store.save(installation)
+    // Register this newly-seen guild's commands (best-effort, hash-skipped).
+    const app = await store.getAppConfig()
+    if (app) await this.#registerCommands(app, installation, guildId)
     this.#configured = true
     if (!wasActive) await this.#config.onInstall?.(installation)
     return installation
@@ -413,6 +430,41 @@ export class DiscordProvider implements ChannelProvider {
 
   #apiBaseUrl(): string {
     return this.#config.apiBaseUrl ?? DISCORD_API_BASE_URL
+  }
+
+  /**
+   * Register an installation's slash commands (best-effort — a failure logs and
+   * doesn't block connect). Skips the `PUT` when the command hash is unchanged
+   * for the scope key, so re-activation of a known guild costs no API call
+   * (200 creates/day/guild). `guildId` is required for guild scope; global scope
+   * ignores it and registers once under the `'global'` key.
+   */
+  async #registerCommands(app: DiscordAppConfig, installation: DiscordInstallation, guildId?: string): Promise<void> {
+    const commands = installation.commands ?? []
+    if (!commands.length) return
+    const scope = this.#config.commandScope ?? 'guild'
+    const key = scope === 'global' ? 'global' : guildId
+    if (!key) return // guild scope with no guild yet — defer to lazy activation
+
+    const hash = hashCommands(commands)
+    const versions = installation.commandVersions ?? {}
+    if (versions[key] === hash) return // unchanged — skip (rate-limit aware)
+
+    try {
+      if (scope === 'global') {
+        await registerGlobalCommands(app.botToken, app.applicationId, commands, this.#apiBaseUrl())
+      } else {
+        await registerGuildCommands(app.botToken, app.applicationId, guildId!, commands, this.#apiBaseUrl())
+      }
+      installation.commandVersions = { ...versions, [key]: hash }
+      const store = await this.#getStore()
+      await store.save(installation)
+    } catch (err) {
+      console.warn(
+        `[Discord] command registration failed (${scope}${guildId ? `, guild ${guildId}` : ''}):`,
+        err,
+      )
+    }
   }
 
   /** Build (once) the adapter for an installation from the shared app config. */

@@ -4,6 +4,10 @@ import {
   DISCORD_API_BASE_URL,
   DISCORD_OAUTH_AUTHORIZE_URL,
 } from './types'
+import type { DiscordCommand } from './types'
+
+/** `CHAT_INPUT` (slash) application command type. */
+const APPLICATION_COMMAND_TYPE_CHAT_INPUT = 1
 
 /**
  * The subset of Discord's application object the control plane reads back from
@@ -98,6 +102,58 @@ export async function guildHealthCheck(
   // Drain the body so the connection can be reused (undici keep-alive).
   await response.body?.cancel().catch(() => {})
   return response.ok
+}
+
+/** Map normalized commands to the Discord bulk-overwrite `CHAT_INPUT` payload. */
+function toCommandPayload(commands: readonly DiscordCommand[]) {
+  return commands.map((c) => ({
+    name: c.name,
+    description: c.description,
+    type: APPLICATION_COMMAND_TYPE_CHAT_INPUT,
+  }))
+}
+
+/**
+ * Bulk-overwrite a **guild's** slash commands (`PUT …/guilds/{guildId}/commands`).
+ * Guild-scoped commands update **instantly**. Register on first-seen guild;
+ * callers skip the call when the command hash is unchanged (200 creates/day/guild).
+ *
+ * @see https://discord.com/developers/docs/interactions/application-commands#bulk-overwrite-guild-application-commands
+ */
+export async function registerGuildCommands(
+  botToken: string,
+  applicationId: string,
+  guildId: string,
+  commands: readonly DiscordCommand[],
+  apiBaseUrl: string = DISCORD_API_BASE_URL,
+): Promise<void> {
+  const path = `/applications/${applicationId}/guilds/${guildId}/commands`
+  const response = await discordRequest(botToken, 'PUT', path, apiBaseUrl, toCommandPayload(commands))
+  if (!response.ok) {
+    throw new Error(`Discord guild command registration failed: ${await describeError(response)}`)
+  }
+  await response.body?.cancel().catch(() => {})
+}
+
+/**
+ * Bulk-overwrite the app's **global** slash commands (`PUT …/commands`).
+ * Eventually consistent (propagation is not instant — don't quote a fixed
+ * number). Opt-in via `commandScope: 'global'`.
+ *
+ * @see https://discord.com/developers/docs/interactions/application-commands#bulk-overwrite-global-application-commands
+ */
+export async function registerGlobalCommands(
+  botToken: string,
+  applicationId: string,
+  commands: readonly DiscordCommand[],
+  apiBaseUrl: string = DISCORD_API_BASE_URL,
+): Promise<void> {
+  const path = `/applications/${applicationId}/commands`
+  const response = await discordRequest(botToken, 'PUT', path, apiBaseUrl, toCommandPayload(commands))
+  if (!response.ok) {
+    throw new Error(`Discord global command registration failed: ${await describeError(response)}`)
+  }
+  await response.body?.cancel().catch(() => {})
 }
 
 /** Inputs for {@link buildInviteUrl}. */
