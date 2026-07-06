@@ -2,8 +2,8 @@
   "name": "@mastra/discord",
   "version": "0.0.0",
   "description": "Discord channel wrapper for Mastra — a ChannelProvider over @chat-adapter/discord.",
+  "license": "Apache-2.0",
   "type": "module",
-  "private": true,
   "main": "./dist/index.js",
   "module": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -19,9 +19,10 @@
       }
     }
   },
-  "files": ["dist"],
+  "files": ["dist", "CHANGELOG.md"],
   "scripts": {
     "build": "tsup",
+    "dev": "tsup --watch",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest"
@@ -39,5 +40,27 @@
     "typescript": "^5.7.0",
     "undici": "^6.0.0",
     "vitest": "^4.1.9"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "keywords": [
+    "mastra",
+    "discord",
+    "chatbot",
+    "ai",
+    "agent"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/mastra-ai/mastra.git",
+    "directory": "channels/discord"
+  },
+  "homepage": "https://mastra.ai",
+  "bugs": {
+    "url": "https://github.com/mastra-ai/mastra/issues"
+  },
+  "engines": {
+    "node": ">=22.13.0"
   }
 }
