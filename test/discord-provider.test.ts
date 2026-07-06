@@ -528,6 +528,41 @@ describe('DiscordProvider — interactions route (raw-body → adapter.handleWeb
     const res = await handler(ctx)
     expect(res.status).toBe(401)
   })
+
+  it("activates the guild from an interaction's guild_id (lazy activation via the route)", async () => {
+    const { privateKey, publicKeyHex } = makeKeypair()
+    const drained: Promise<unknown>[] = []
+    const provider = new DiscordProvider({
+      storage: new InMemoryChannelsStorage(),
+      app: { ...APP, publicKey: publicKeyHex },
+      gateway: false,
+      waitUntil: (p) => void drained.push(Promise.resolve(p)),
+    })
+    stubValidateApp()
+    const cmds = stubGuildCommands(GUILD)
+    await provider.connect('agent-1') // pending — no guild yet
+    const inst = await provider.getInstallation('agent-1')
+
+    const route = provider.getRoutes()[0]
+    if (!('createHandler' in route)) throw new Error('expected a createHandler route')
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const handler = await route.createHandler({ mastra: stubMastra as any })
+
+    // A signed guild interaction (no agent wired → adapter path); the route reads
+    // guild_id off a CLONE and schedules activation via waitUntil.
+    const body = JSON.stringify({ type: 2, guild_id: GUILD, data: { name: 'help' } })
+    const timestamp = '1700000001'
+    await handler(makeCtx(inst!.webhookId, {
+      'x-signature-ed25519': signed(privateKey, timestamp, body),
+      'x-signature-timestamp': timestamp,
+    }, body))
+    await Promise.all(drained) // drain the scheduled activation
+
+    const after = await provider.getInstallation('agent-1')
+    expect(after!.status).toBe('active')
+    expect(after!.guildIds).toContain(GUILD)
+    expect(cmds().length).toBeGreaterThanOrEqual(1) // commands registered for the newly-seen guild
+  })
 })
 
 describe('DiscordProvider — AgentChannels wiring (parity with @mastra/slack)', () => {

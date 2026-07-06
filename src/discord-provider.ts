@@ -396,7 +396,12 @@ export class DiscordProvider implements ChannelProvider {
     if (!agent || !this.#mastra) {
       // No agent wired (endpoint-verification PING, or the agent was removed).
       // Delegate straight to the adapter so Ed25519 + PING/PONG still work.
-      return adapter.handleWebhook(c.req.raw, waitUntil ? { waitUntil } : undefined)
+      try {
+        return await adapter.handleWebhook(c.req.raw, waitUntil ? { waitUntil } : undefined)
+      } catch (err) {
+        console.error('[Discord] adapter.handleWebhook error:', err)
+        return c.json({ error: 'Internal error' }, 500)
+      }
     }
 
     let channels = agent.getChannels()
