@@ -1,4 +1,4 @@
-import { defineConfig } from 'tsup'
+import { defineConfig } from 'tsup';
 
 // @chat-adapter/discord (Vercel Chat SDK) is ESM-only — its package `exports`
 // has no `require`/`default` condition, so a CJS `require()` of it throws
@@ -7,7 +7,7 @@ import { defineConfig } from 'tsup'
 // output so `require('@mastra/discord')` never touches the adapter's ESM-only
 // entry. Only @mastra/core stays external in both.
 // See vault note: reference-mastra-channel-wrapper-esm-only.
-const ADAPTER = ['@chat-adapter/discord', '@chat-adapter/shared', 'chat']
+const ADAPTER = ['@chat-adapter/discord', '@chat-adapter/shared', 'chat'];
 
 export default defineConfig([
   {
@@ -29,4 +29,4 @@ export default defineConfig([
     external: ['@mastra/core'],
     noExternal: ADAPTER,
   },
-])
+]);

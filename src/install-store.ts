@@ -1,27 +1,27 @@
-import type { ChannelInstallationInfo } from '@mastra/core/channels'
-import type { ChannelInstallation, ChannelsStorage } from '@mastra/core/storage'
-import type { DiscordAppConfig, DiscordCommand, DiscordInstallation } from './types'
-import { decrypt, encrypt } from './crypto'
+import type { ChannelInstallationInfo } from '@mastra/core/channels';
+import type { ChannelInstallation, ChannelsStorage } from '@mastra/core/storage';
+import type { DiscordAppConfig, DiscordCommand, DiscordInstallation } from './types';
+import { decrypt, encrypt } from './crypto';
 
 /** Platform identifier used for every stored record, config, and route. */
-export const PLATFORM = 'discord'
+export const PLATFORM = 'discord';
 
 /** Per-agent fields serialized into a {@link ChannelInstallation.data} blob (no secrets). */
 interface DiscordInstallationData {
-  guildIds?: string[]
-  displayName?: string
-  commands?: DiscordCommand[]
-  commandVersions?: Record<string, string>
+  guildIds?: string[];
+  displayName?: string;
+  commands?: DiscordCommand[];
+  commandVersions?: Record<string, string>;
 }
 
 /** App-config fields serialized into the platform `ChannelConfig.data` blob. */
 interface DiscordAppConfigData {
   /** Bot token — the only secret; AES-256-GCM encrypted when an `encryptionKey` is set. */
-  botToken?: string
+  botToken?: string;
   /** Ed25519 public key (public — stored plaintext). */
-  publicKey?: string
+  publicKey?: string;
   /** Application (client) id (public — stored plaintext). */
-  applicationId?: string
+  applicationId?: string;
 }
 
 /**
@@ -46,15 +46,15 @@ export class DiscordInstallStore {
 
   /** The stored app config, if any (bot token decrypted). */
   async getAppConfig(): Promise<DiscordAppConfig | null> {
-    const config = await this.storage.getConfig(PLATFORM)
-    if (!config) return null
-    const data = (config.data ?? {}) as DiscordAppConfigData
-    if (!data.botToken || !data.publicKey || !data.applicationId) return null
+    const config = await this.storage.getConfig(PLATFORM);
+    if (!config) return null;
+    const data = (config.data ?? {}) as DiscordAppConfigData;
+    if (!data.botToken || !data.publicKey || !data.applicationId) return null;
     return {
       botToken: this.#dec(data.botToken)!,
       publicKey: data.publicKey,
       applicationId: data.applicationId,
-    }
+    };
   }
 
   /** Persist the app config once (bot token encrypted at rest when keyed). */
@@ -63,27 +63,27 @@ export class DiscordInstallStore {
       botToken: this.#enc(app.botToken),
       publicKey: app.publicKey,
       applicationId: app.applicationId,
-    }
-    await this.storage.saveConfig({ platform: PLATFORM, data: data as Record<string, unknown>, updatedAt: new Date() })
+    };
+    await this.storage.saveConfig({ platform: PLATFORM, data: data as Record<string, unknown>, updatedAt: new Date() });
   }
 
   /** Remove the stored app config. */
   async deleteAppConfig(): Promise<void> {
-    await this.storage.deleteConfig(PLATFORM)
+    await this.storage.deleteConfig(PLATFORM);
   }
 
   // --- Install tier (one row per agent) -------------------------------------
 
   /** The installation for an agent, if any. */
   async getByAgent(agentId: string): Promise<DiscordInstallation | null> {
-    const record = await this.storage.getInstallationByAgent(PLATFORM, agentId)
-    return record ? this.#fromRecord(record) : null
+    const record = await this.storage.getInstallationByAgent(PLATFORM, agentId);
+    return record ? this.#fromRecord(record) : null;
   }
 
   /** Look up an installation by the routing id in its interactions-route path. */
   async getByWebhookId(webhookId: string): Promise<DiscordInstallation | null> {
-    const record = await this.storage.getInstallationByWebhookId(webhookId)
-    return record && record.platform === PLATFORM ? this.#fromRecord(record) : null
+    const record = await this.storage.getInstallationByWebhookId(webhookId);
+    return record && record.platform === PLATFORM ? this.#fromRecord(record) : null;
   }
 
   /**
@@ -91,34 +91,34 @@ export class DiscordInstallStore {
    * when the routing key is a guild rather than a webhook id.
    */
   async getByGuildId(guildId: string): Promise<DiscordInstallation | null> {
-    const records = await this.storage.listInstallations(PLATFORM)
-    const record = records.find((r) => ((r.data as DiscordInstallationData)?.guildIds ?? []).includes(guildId))
-    return record ? this.#fromRecord(record) : null
+    const records = await this.storage.listInstallations(PLATFORM);
+    const record = records.find(r => ((r.data as DiscordInstallationData)?.guildIds ?? []).includes(guildId));
+    return record ? this.#fromRecord(record) : null;
   }
 
   /** Insert or replace an installation. */
   async save(installation: DiscordInstallation): Promise<void> {
-    await this.storage.saveInstallation(this.#toRecord(installation))
+    await this.storage.saveInstallation(this.#toRecord(installation));
   }
 
   /** All Discord installations (active and pending). */
   async list(): Promise<DiscordInstallation[]> {
-    const records = await this.storage.listInstallations(PLATFORM)
-    return records.map((r) => this.#fromRecord(r))
+    const records = await this.storage.listInstallations(PLATFORM);
+    return records.map(r => this.#fromRecord(r));
   }
 
   /** Remove an agent's installation, if present. */
   async deleteByAgent(agentId: string): Promise<void> {
-    const record = await this.storage.getInstallationByAgent(PLATFORM, agentId)
-    if (record) await this.storage.deleteInstallation(record.id)
+    const record = await this.storage.getInstallationByAgent(PLATFORM, agentId);
+    if (record) await this.storage.deleteInstallation(record.id);
   }
 
   #enc(value: string | undefined): string | undefined {
-    return value && this.encryptionKey ? encrypt(value, this.encryptionKey) : value
+    return value && this.encryptionKey ? encrypt(value, this.encryptionKey) : value;
   }
 
   #dec(value: string | undefined): string | undefined {
-    return value && this.encryptionKey ? decrypt(value, this.encryptionKey) : value
+    return value && this.encryptionKey ? decrypt(value, this.encryptionKey) : value;
   }
 
   #toRecord(install: DiscordInstallation): ChannelInstallation {
@@ -127,7 +127,7 @@ export class DiscordInstallStore {
       displayName: install.displayName,
       commands: install.commands,
       commandVersions: install.commandVersions,
-    }
+    };
     return {
       id: install.id,
       platform: PLATFORM,
@@ -137,11 +137,11 @@ export class DiscordInstallStore {
       data: data as Record<string, unknown>,
       createdAt: install.installedAt,
       updatedAt: new Date(),
-    }
+    };
   }
 
   #fromRecord(record: ChannelInstallation): DiscordInstallation {
-    const data = (record.data ?? {}) as DiscordInstallationData
+    const data = (record.data ?? {}) as DiscordInstallationData;
     return {
       id: record.id,
       agentId: record.agentId,
@@ -152,7 +152,7 @@ export class DiscordInstallStore {
       commands: data.commands,
       commandVersions: data.commandVersions,
       installedAt: record.createdAt,
-    }
+    };
   }
 }
 
@@ -165,5 +165,5 @@ export function toInstallationInfo(install: DiscordInstallation): ChannelInstall
     status: install.status,
     displayName: install.displayName,
     installedAt: install.installedAt,
-  }
+  };
 }

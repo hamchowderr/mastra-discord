@@ -1,5 +1,5 @@
-import { randomUUID } from 'node:crypto'
-import { AgentChannels, resolveWaitUntil } from '@mastra/core/channels'
+import { randomUUID } from 'node:crypto';
+import { AgentChannels, resolveWaitUntil } from '@mastra/core/channels';
 import type {
   ChannelAdapterConfig,
   ChannelConnectResult,
@@ -7,30 +7,25 @@ import type {
   ChannelPlatformInfo,
   ChannelProvider,
   StreamingConfig,
-} from '@mastra/core/channels'
-import type { Agent } from '@mastra/core/agent'
-import type { Mastra } from '@mastra/core/mastra'
-import type { ApiRoute, ApiRouteHandler } from '@mastra/core/server'
-import { InMemoryChannelsStorage } from '@mastra/core/storage'
-import type { ChannelsStorage } from '@mastra/core/storage'
-import { createDiscordAdapter } from '@chat-adapter/discord'
-import type { DiscordAdapter } from '@chat-adapter/discord'
+} from '@mastra/core/channels';
+import type { Agent } from '@mastra/core/agent';
+import type { Mastra } from '@mastra/core/mastra';
+import type { ApiRoute, ApiRouteHandler } from '@mastra/core/server';
+import { InMemoryChannelsStorage } from '@mastra/core/storage';
+import type { ChannelsStorage } from '@mastra/core/storage';
+import { createDiscordAdapter } from '@chat-adapter/discord';
+import type { DiscordAdapter } from '@chat-adapter/discord';
 import {
   buildInviteUrl,
   guildHealthCheck,
   registerGlobalCommands,
   registerGuildCommands,
   validateApp,
-} from './discord-client'
-import { DEFAULT_COMMANDS, hashCommands, normalizeCommands } from './commands'
-import { DiscordInstallStore, PLATFORM, toInstallationInfo } from './install-store'
-import { DEFAULT_INVITE_PERMISSIONS, DEFAULT_INVITE_SCOPES, DISCORD_API_BASE_URL } from './types'
-import type {
-  DiscordAppConfig,
-  DiscordConnectOptions,
-  DiscordInstallation,
-  DiscordProviderConfig,
-} from './types'
+} from './discord-client';
+import { DEFAULT_COMMANDS, hashCommands, normalizeCommands } from './commands';
+import { DiscordInstallStore, PLATFORM, toInstallationInfo } from './install-store';
+import { DEFAULT_INVITE_PERMISSIONS, DEFAULT_INVITE_SCOPES, DISCORD_API_BASE_URL } from './types';
+import type { DiscordAppConfig, DiscordConnectOptions, DiscordInstallation, DiscordProviderConfig } from './types';
 
 /**
  * Resolve the per-adapter config the provider applies to the Discord entry in
@@ -42,17 +37,17 @@ import type {
 export function resolveDiscordAdapterConfig(
   config: Pick<DiscordProviderConfig, 'streaming' | 'typingStatus' | 'toolDisplay' | 'gateway'>,
 ): {
-  streaming: StreamingConfig
-  typingStatus: boolean
-  toolDisplay: ChannelAdapterConfig['toolDisplay']
-  gateway: boolean
+  streaming: StreamingConfig;
+  typingStatus: boolean;
+  toolDisplay: ChannelAdapterConfig['toolDisplay'];
+  gateway: boolean;
 } {
   return {
     streaming: config.streaming ?? true,
     typingStatus: config.typingStatus ?? true,
     toolDisplay: config.toolDisplay ?? 'cards',
     gateway: config.gateway ?? true,
-  }
+  };
 }
 
 /**
@@ -81,22 +76,22 @@ export function resolveDiscordAdapterConfig(
  * wiring. Command registration lands in `mastra-discord-13x.4`.
  */
 export class DiscordProvider implements ChannelProvider {
-  readonly id = PLATFORM
+  readonly id = PLATFORM;
 
-  #config: DiscordProviderConfig
-  #mastra?: Mastra
-  #store?: DiscordInstallStore
+  #config: DiscordProviderConfig;
+  #mastra?: Mastra;
+  #store?: DiscordInstallStore;
   /** Live adapters, keyed by installation id (one per agent; all share the app's bot token). */
-  #adapters = new Map<string, DiscordAdapter>()
+  #adapters = new Map<string, DiscordAdapter>();
   /** Cached sync view of whether the app is configured (for {@link getInfo}). */
-  #configured = false
-  #initPromise: Promise<void> | null = null
+  #configured = false;
+  #initPromise: Promise<void> | null = null;
 
   constructor(config: DiscordProviderConfig = {}) {
-    this.#config = config
+    this.#config = config;
     // The app is "configured" as soon as credentials are resolvable (config/env),
     // even before the first connect persists them.
-    this.#configured = this.#suppliedAppConfig() != null
+    this.#configured = this.#suppliedAppConfig() != null;
   }
 
   /**
@@ -105,11 +100,11 @@ export class DiscordProvider implements ChannelProvider {
    */
   __attach(mastra: Mastra): void {
     if (this.#mastra && this.#mastra !== mastra) {
-      this.#initPromise = null
-      this.#store = undefined
-      this.#adapters.clear()
+      this.#initPromise = null;
+      this.#store = undefined;
+      this.#adapters.clear();
     }
-    this.#mastra = mastra
+    this.#mastra = mastra;
   }
 
   /**
@@ -121,14 +116,14 @@ export class DiscordProvider implements ChannelProvider {
    * not a bearer token). Auto-initializes on first hit (mirrors `@mastra/slack`).
    */
   getRoutes(): ApiRoute[] {
-    const self = this
+    const self = this;
     const withInit = (handler: ApiRouteHandler) => {
       return async ({ mastra }: { mastra: Mastra }): Promise<ApiRouteHandler> => {
-        self.#mastra = mastra
-        await self.#autoInitialize()
-        return handler.bind(self)
-      }
-    }
+        self.#mastra = mastra;
+        await self.#autoInitialize();
+        return handler.bind(self);
+      };
+    };
     return [
       {
         path: `/${PLATFORM}/events/:webhookId`,
@@ -136,7 +131,7 @@ export class DiscordProvider implements ChannelProvider {
         requiresAuth: false,
         createHandler: withInit(this.#handleWebhook),
       },
-    ]
+    ];
   }
 
   /** Discovery metadata for the editor UI. */
@@ -164,7 +159,7 @@ export class DiscordProvider implements ChannelProvider {
           },
         },
       },
-    }
+    };
   }
 
   /**
@@ -173,26 +168,26 @@ export class DiscordProvider implements ChannelProvider {
    * per active install so its Gateway loop (core-owned) starts. Idempotent.
    */
   async initialize(): Promise<void> {
-    if (this.#initPromise) return this.#initPromise
-    this.#initPromise = this.#doInitialize()
+    if (this.#initPromise) return this.#initPromise;
+    this.#initPromise = this.#doInitialize();
     try {
-      await this.#initPromise
+      await this.#initPromise;
     } catch (err) {
-      this.#initPromise = null
-      throw err
+      this.#initPromise = null;
+      throw err;
     }
   }
 
   async #doInitialize(): Promise<void> {
-    const store = await this.#getStore()
-    const active = (await store.list()).filter((i) => i.status === 'active')
-    const hasApp = (await store.getAppConfig()) != null || this.#suppliedAppConfig() != null
-    this.#configured = hasApp || active.length > 0
+    const store = await this.#getStore();
+    const active = (await store.list()).filter(i => i.status === 'active');
+    const hasApp = (await store.getAppConfig()) != null || this.#suppliedAppConfig() != null;
+    this.#configured = hasApp || active.length > 0;
     for (const installation of active) {
       try {
-        await this.#activateInstallation(installation)
+        await this.#activateInstallation(installation);
       } catch (err) {
-        console.error(`[Discord] Failed to restore installation "${installation.id}":`, err)
+        console.error(`[Discord] Failed to restore installation "${installation.id}":`, err);
       }
     }
   }
@@ -204,14 +199,14 @@ export class DiscordProvider implements ChannelProvider {
    */
   async configure(credentials: Partial<DiscordAppConfig> | null): Promise<void> {
     if (credentials === null) {
-      const store = await this.#getStore()
-      await store.deleteAppConfig()
-      this.#config = { ...this.#config, app: undefined }
-      this.#configured = false
-      return
+      const store = await this.#getStore();
+      await store.deleteAppConfig();
+      this.#config = { ...this.#config, app: undefined };
+      this.#configured = false;
+      return;
     }
-    this.#config = { ...this.#config, app: { ...this.#config.app, ...credentials } }
-    this.#configured = this.#suppliedAppConfig() != null || this.#configured
+    this.#config = { ...this.#config, app: { ...this.#config.app, ...credentials } };
+    this.#configured = this.#suppliedAppConfig() != null || this.#configured;
   }
 
   /**
@@ -228,26 +223,26 @@ export class DiscordProvider implements ChannelProvider {
    *   first interaction.
    */
   async connect(agentId: string, options: DiscordConnectOptions = {}): Promise<ChannelConnectResult> {
-    const store = await this.#getStore()
-    const existing = await store.getByAgent(agentId)
+    const store = await this.#getStore();
+    const existing = await store.getByAgent(agentId);
     if (existing?.status === 'active') {
       throw new Error(
         `Agent "${agentId}" is already connected to Discord. Disconnect first to reconnect. ` +
           'To add another server, invite the bot with the existing URL — new guilds activate on first use.',
-      )
+      );
     }
 
-    const { app, persisted } = await this.#resolveAppConfig(store)
+    const { app, persisted } = await this.#resolveAppConfig(store);
     // Validate the token before persisting supplied credentials — an invalid
     // token must leave no app config and no install behind.
-    const identity = await validateApp(app.botToken, this.#apiBaseUrl())
-    if (!persisted) await store.saveAppConfig(app)
+    const identity = await validateApp(app.botToken, this.#apiBaseUrl());
+    if (!persisted) await store.saveAppConfig(app);
 
-    const installationId = existing?.id ?? randomUUID()
-    const webhookId = existing?.webhookId ?? randomUUID()
-    const displayName = options.name ?? identity.name
-    const installedAt = existing?.installedAt ?? new Date()
-    const commands = normalizeCommands(options.commands ?? this.#config.commands ?? DEFAULT_COMMANDS)
+    const installationId = existing?.id ?? randomUUID();
+    const webhookId = existing?.webhookId ?? randomUUID();
+    const displayName = options.name ?? identity.name;
+    const installedAt = existing?.installedAt ?? new Date();
+    const commands = normalizeCommands(options.commands ?? this.#config.commands ?? DEFAULT_COMMANDS);
 
     // Eager bind: the bot is already a member of the target guild.
     if (options.guildId && (await guildHealthCheck(app.botToken, options.guildId, this.#apiBaseUrl()))) {
@@ -261,13 +256,13 @@ export class DiscordProvider implements ChannelProvider {
         commands: commands.length ? commands : undefined,
         commandVersions: existing?.commandVersions,
         installedAt,
-      }
-      await store.save(installation)
-      await this.#registerCommands(app, installation, options.guildId)
-      await this.#activateInstallation(installation)
-      this.#configured = true
-      await this.#config.onInstall?.(installation)
-      return { type: 'immediate', installationId }
+      };
+      await store.save(installation);
+      await this.#registerCommands(app, installation, options.guildId);
+      await this.#activateInstallation(installation);
+      this.#configured = true;
+      await this.#config.onInstall?.(installation);
+      return { type: 'immediate', installationId };
     }
 
     // Invite flow: persist pending, hand back the OAuth2 bot-invite URL.
@@ -281,18 +276,18 @@ export class DiscordProvider implements ChannelProvider {
       commands: commands.length ? commands : undefined,
       commandVersions: existing?.commandVersions,
       installedAt,
-    }
-    await store.save(pending)
+    };
+    await store.save(pending);
     // Global commands don't need a guild — register once now (best-effort).
     // Guild commands wait for the first-seen guild (lazy activation).
-    await this.#registerCommands(app, pending)
-    this.#configured = true
+    await this.#registerCommands(app, pending);
+    this.#configured = true;
     const authorizationUrl = buildInviteUrl({
       applicationId: app.applicationId,
       permissions: options.permissions ?? this.#config.permissions ?? DEFAULT_INVITE_PERMISSIONS,
       scopes: DEFAULT_INVITE_SCOPES,
-    })
-    return { type: 'oauth', authorizationUrl, installationId }
+    });
+    return { type: 'oauth', authorizationUrl, installationId };
   }
 
   /**
@@ -302,23 +297,23 @@ export class DiscordProvider implements ChannelProvider {
    * `webhookId` is unknown.
    */
   async activateGuild(webhookId: string, guildId: string): Promise<DiscordInstallation | null> {
-    const store = await this.#getStore()
-    const installation = await store.getByWebhookId(webhookId)
-    if (!installation) return null
+    const store = await this.#getStore();
+    const installation = await store.getByWebhookId(webhookId);
+    if (!installation) return null;
 
-    const wasActive = installation.status === 'active'
-    const known = installation.guildIds.includes(guildId)
-    if (wasActive && known) return installation // nothing to persist
+    const wasActive = installation.status === 'active';
+    const known = installation.guildIds.includes(guildId);
+    if (wasActive && known) return installation; // nothing to persist
 
-    if (!known) installation.guildIds.push(guildId)
-    installation.status = 'active'
-    await store.save(installation)
+    if (!known) installation.guildIds.push(guildId);
+    installation.status = 'active';
+    await store.save(installation);
     // Register this newly-seen guild's commands (best-effort, hash-skipped).
-    const app = await store.getAppConfig()
-    if (app) await this.#registerCommands(app, installation, guildId)
-    this.#configured = true
-    if (!wasActive) await this.#config.onInstall?.(installation)
-    return installation
+    const app = await store.getAppConfig();
+    if (app) await this.#registerCommands(app, installation, guildId);
+    this.#configured = true;
+    if (!wasActive) await this.#config.onInstall?.(installation);
+    return installation;
   }
 
   /**
@@ -331,37 +326,37 @@ export class DiscordProvider implements ChannelProvider {
    * duration boundary. Contrast Telegram's clean `stopPolling()`.
    */
   async disconnect(agentId: string): Promise<void> {
-    const store = await this.#getStore()
-    const existing = await store.getByAgent(agentId)
+    const store = await this.#getStore();
+    const existing = await store.getByAgent(agentId);
     if (!existing) {
-      throw new Error(`No Discord installation found for agent "${agentId}"`)
+      throw new Error(`No Discord installation found for agent "${agentId}"`);
     }
-    this.#adapters.delete(existing.id)
-    await store.deleteByAgent(agentId)
-    this.#configured = (await store.getAppConfig()) != null || (await store.list()).some((i) => i.status === 'active')
+    this.#adapters.delete(existing.id);
+    await store.deleteByAgent(agentId);
+    this.#configured = (await store.getAppConfig()) != null || (await store.list()).some(i => i.status === 'active');
   }
 
   /** List installations (public info only — no secrets). */
   async listInstallations(): Promise<ChannelInstallationInfo[]> {
-    const store = await this.#getStore()
-    const installations = await store.list()
-    return installations.map(toInstallationInfo)
+    const store = await this.#getStore();
+    const installations = await store.list();
+    return installations.map(toInstallationInfo);
   }
 
   /** The full installation for an agent (no secrets live on it), or `null`. */
   async getInstallation(agentId: string): Promise<DiscordInstallation | null> {
-    const store = await this.#getStore()
-    return (await store.getByAgent(agentId)) ?? null
+    const store = await this.#getStore();
+    return (await store.getByAgent(agentId)) ?? null;
   }
 
   /** Whether the Discord app is configured (credentials resolvable). */
   isConfigured(): boolean {
-    return this.#configured
+    return this.#configured;
   }
 
   /** The live `DiscordAdapter` for an installation id, if one is active. */
   getAdapter(installationId: string): DiscordAdapter | undefined {
-    return this.#adapters.get(installationId)
+    return this.#adapters.get(installationId);
   }
 
   // ===========================================================================
@@ -369,61 +364,61 @@ export class DiscordProvider implements ChannelProvider {
   // ===========================================================================
 
   async #handleWebhook(c: {
-    req: { param: (k: string) => string | undefined; header: (k: string) => string | undefined; raw: Request }
-    json: (body: unknown, status?: number) => Response
+    req: { param: (k: string) => string | undefined; header: (k: string) => string | undefined; raw: Request };
+    json: (body: unknown, status?: number) => Response;
   }): Promise<Response> {
-    const webhookId = c.req.param('webhookId')
-    if (!webhookId) return c.json({ error: 'Missing webhookId' }, 400)
+    const webhookId = c.req.param('webhookId');
+    if (!webhookId) return c.json({ error: 'Missing webhookId' }, 400);
 
-    const store = await this.#getStore()
-    const installation = await store.getByWebhookId(webhookId)
-    if (!installation) return c.json({ error: 'Unknown webhook' }, 404)
+    const store = await this.#getStore();
+    const installation = await store.getByWebhookId(webhookId);
+    if (!installation) return c.json({ error: 'Unknown webhook' }, 404);
 
-    const app = await store.getAppConfig()
-    if (!app) return c.json({ error: 'Discord app is not configured' }, 503)
+    const app = await store.getAppConfig();
+    if (!app) return c.json({ error: 'Discord app is not configured' }, 503);
 
-    const adapter = this.#getOrCreateAdapter(installation, app)
-    const waitUntil = this.#config.waitUntil ?? resolveWaitUntil(c as never)
+    const adapter = this.#getOrCreateAdapter(installation, app);
+    const waitUntil = this.#config.waitUntil ?? resolveWaitUntil(c as never);
 
     // Lazily confirm the guild off the interaction's authoritative `guild_id`,
     // in the background so the 3s deferred-ACK window isn't spent on storage I/O.
     // Clone FIRST so the raw bytes reach the adapter untouched (Ed25519 footgun).
-    const activation = this.#activateFromInteraction(webhookId, c.req.raw.clone())
-    if (waitUntil) waitUntil(activation)
-    else void activation.catch(() => {})
+    const activation = this.#activateFromInteraction(webhookId, c.req.raw.clone());
+    if (waitUntil) waitUntil(activation);
+    else void activation.catch(() => {});
 
-    const agent = this.#resolveAgent(installation.agentId)
+    const agent = this.#resolveAgent(installation.agentId);
     if (!agent || !this.#mastra) {
       // No agent wired (endpoint-verification PING, or the agent was removed).
       // Delegate straight to the adapter so Ed25519 + PING/PONG still work.
       try {
-        return await adapter.handleWebhook(c.req.raw, waitUntil ? { waitUntil } : undefined)
+        return await adapter.handleWebhook(c.req.raw, waitUntil ? { waitUntil } : undefined);
       } catch (err) {
-        console.error('[Discord] adapter.handleWebhook error:', err)
-        return c.json({ error: 'Internal error' }, 500)
+        console.error('[Discord] adapter.handleWebhook error:', err);
+        return c.json({ error: 'Internal error' }, 500);
       }
     }
 
-    let channels = agent.getChannels()
+    let channels = agent.getChannels();
     if (!channels || channels.adapters[PLATFORM] !== adapter) {
-      channels = this.#createAgentChannels(agent, adapter)
-      await channels.initialize(this.#mastra)
+      channels = this.#createAgentChannels(agent, adapter);
+      await channels.initialize(this.#mastra);
     }
 
     try {
-      return await channels.handleWebhookEvent(PLATFORM, c.req.raw, waitUntil ? { waitUntil } : undefined)
+      return await channels.handleWebhookEvent(PLATFORM, c.req.raw, waitUntil ? { waitUntil } : undefined);
     } catch (err) {
-      console.error('[Discord] Error delegating to AgentChannels:', err)
-      return c.json({ error: 'Internal error' }, 500)
+      console.error('[Discord] Error delegating to AgentChannels:', err);
+      return c.json({ error: 'Internal error' }, 500);
     }
   }
 
   /** Extract the guild from an interaction body (a clone) and activate it. Best-effort. */
   async #activateFromInteraction(webhookId: string, request: Request): Promise<void> {
     try {
-      const body = (await request.json()) as { guild_id?: string }
+      const body = (await request.json()) as { guild_id?: string };
       // PING (type 1) and DMs have no guild_id — nothing to activate.
-      if (body?.guild_id) await this.activateGuild(webhookId, body.guild_id)
+      if (body?.guild_id) await this.activateGuild(webhookId, body.guild_id);
     } catch {
       // Unreadable/non-JSON body, or no guild — skip.
     }
@@ -434,7 +429,7 @@ export class DiscordProvider implements ChannelProvider {
   // ===========================================================================
 
   #apiBaseUrl(): string {
-    return this.#config.apiBaseUrl ?? DISCORD_API_BASE_URL
+    return this.#config.apiBaseUrl ?? DISCORD_API_BASE_URL;
   }
 
   /**
@@ -445,37 +440,34 @@ export class DiscordProvider implements ChannelProvider {
    * ignores it and registers once under the `'global'` key.
    */
   async #registerCommands(app: DiscordAppConfig, installation: DiscordInstallation, guildId?: string): Promise<void> {
-    const commands = installation.commands ?? []
-    if (!commands.length) return
-    const scope = this.#config.commandScope ?? 'guild'
-    const key = scope === 'global' ? 'global' : guildId
-    if (!key) return // guild scope with no guild yet — defer to lazy activation
+    const commands = installation.commands ?? [];
+    if (!commands.length) return;
+    const scope = this.#config.commandScope ?? 'guild';
+    const key = scope === 'global' ? 'global' : guildId;
+    if (!key) return; // guild scope with no guild yet — defer to lazy activation
 
-    const hash = hashCommands(commands)
-    const versions = installation.commandVersions ?? {}
-    if (versions[key] === hash) return // unchanged — skip (rate-limit aware)
+    const hash = hashCommands(commands);
+    const versions = installation.commandVersions ?? {};
+    if (versions[key] === hash) return; // unchanged — skip (rate-limit aware)
 
     try {
       if (scope === 'global') {
-        await registerGlobalCommands(app.botToken, app.applicationId, commands, this.#apiBaseUrl())
+        await registerGlobalCommands(app.botToken, app.applicationId, commands, this.#apiBaseUrl());
       } else {
-        await registerGuildCommands(app.botToken, app.applicationId, guildId!, commands, this.#apiBaseUrl())
+        await registerGuildCommands(app.botToken, app.applicationId, guildId!, commands, this.#apiBaseUrl());
       }
-      installation.commandVersions = { ...versions, [key]: hash }
-      const store = await this.#getStore()
-      await store.save(installation)
+      installation.commandVersions = { ...versions, [key]: hash };
+      const store = await this.#getStore();
+      await store.save(installation);
     } catch (err) {
-      console.warn(
-        `[Discord] command registration failed (${scope}${guildId ? `, guild ${guildId}` : ''}):`,
-        err,
-      )
+      console.warn(`[Discord] command registration failed (${scope}${guildId ? `, guild ${guildId}` : ''}):`, err);
     }
   }
 
   /** Build (once) the adapter for an installation from the shared app config. */
   #getOrCreateAdapter(installation: DiscordInstallation, app: DiscordAppConfig): DiscordAdapter {
-    const existing = this.#adapters.get(installation.id)
-    if (existing) return existing
+    const existing = this.#adapters.get(installation.id);
+    if (existing) return existing;
     const adapter = createDiscordAdapter({
       botToken: app.botToken,
       publicKey: app.publicKey,
@@ -485,21 +477,21 @@ export class DiscordProvider implements ChannelProvider {
       ...(this.#config.mentionRoleIds !== undefined ? { mentionRoleIds: this.#config.mentionRoleIds } : {}),
       ...(this.#config.interactionFlags !== undefined ? { interactionFlags: this.#config.interactionFlags } : {}),
       ...(this.#config.logger !== undefined ? { logger: this.#config.logger } : {}),
-    })
-    this.#adapters.set(installation.id, adapter)
-    return adapter
+    });
+    this.#adapters.set(installation.id, adapter);
+    return adapter;
   }
 
   /** Rebuild the adapter and inject AgentChannels for an active installation. */
   async #activateInstallation(installation: DiscordInstallation): Promise<void> {
-    const store = await this.#getStore()
-    const app = await store.getAppConfig()
-    if (!app) return
-    const agent = this.#resolveAgent(installation.agentId)
-    const adapter = this.#getOrCreateAdapter(installation, app)
+    const store = await this.#getStore();
+    const app = await store.getAppConfig();
+    if (!app) return;
+    const agent = this.#resolveAgent(installation.agentId);
+    const adapter = this.#getOrCreateAdapter(installation, app);
     if (agent && this.#mastra) {
-      const channels = this.#createAgentChannels(agent, adapter)
-      await channels.initialize(this.#mastra)
+      const channels = this.#createAgentChannels(agent, adapter);
+      await channels.initialize(this.#mastra);
     }
   }
 
@@ -510,15 +502,15 @@ export class DiscordProvider implements ChannelProvider {
    * reconnection loop for DMs/mentions.
    */
   #createAgentChannels(agent: Agent, adapter: DiscordAdapter): AgentChannels {
-    const existing = agent.getChannels()
-    const existingConfig = existing?.channelConfig
-    const cfg = this.#config
+    const existing = agent.getChannels();
+    const existingConfig = existing?.channelConfig;
+    const cfg = this.#config;
     const entry = {
       adapter,
       ...resolveDiscordAdapterConfig(cfg),
       ...(cfg.cors !== undefined ? { cors: cfg.cors } : {}),
       ...(cfg.formatError !== undefined ? { formatError: cfg.formatError } : {}),
-    } as ChannelAdapterConfig
+    } as ChannelAdapterConfig;
     const channels = new AgentChannels({
       ...existingConfig,
       adapters: { ...existingConfig?.adapters, [PLATFORM]: entry },
@@ -533,32 +525,32 @@ export class DiscordProvider implements ChannelProvider {
       resolveResourceId: cfg.resolveResourceId ?? existingConfig?.resolveResourceId,
       waitUntil: cfg.waitUntil ?? existingConfig?.waitUntil,
       resolveWaitUntil: cfg.resolveWaitUntil ?? existingConfig?.resolveWaitUntil,
-    })
-    agent.setChannels(channels)
-    return channels
+    });
+    agent.setChannels(channels);
+    return channels;
   }
 
   async #autoInitialize(): Promise<void> {
-    if (!this.#mastra) return
-    await this.initialize()
+    if (!this.#mastra) return;
+    await this.initialize();
   }
 
   #resolveAgent(agentId: string): Agent | undefined {
     try {
-      return this.#mastra?.getAgentById(agentId) as Agent | undefined
+      return this.#mastra?.getAgentById(agentId) as Agent | undefined;
     } catch {
-      return undefined
+      return undefined;
     }
   }
 
   /** App credentials from provider config or `DISCORD_*` env, or `null` if incomplete. */
   #suppliedAppConfig(): DiscordAppConfig | null {
-    const a = this.#config.app ?? {}
-    const botToken = a.botToken ?? process.env.DISCORD_BOT_TOKEN
-    const publicKey = a.publicKey ?? process.env.DISCORD_PUBLIC_KEY
-    const applicationId = a.applicationId ?? process.env.DISCORD_APPLICATION_ID
-    if (botToken && publicKey && applicationId) return { botToken, publicKey, applicationId }
-    return null
+    const a = this.#config.app ?? {};
+    const botToken = a.botToken ?? process.env.DISCORD_BOT_TOKEN;
+    const publicKey = a.publicKey ?? process.env.DISCORD_PUBLIC_KEY;
+    const applicationId = a.applicationId ?? process.env.DISCORD_APPLICATION_ID;
+    if (botToken && publicKey && applicationId) return { botToken, publicKey, applicationId };
+    return null;
   }
 
   /**
@@ -568,38 +560,38 @@ export class DiscordProvider implements ChannelProvider {
    * Throws if neither is available.
    */
   async #resolveAppConfig(store: DiscordInstallStore): Promise<{ app: DiscordAppConfig; persisted: boolean }> {
-    const stored = await store.getAppConfig()
-    if (stored) return { app: stored, persisted: true }
-    const supplied = this.#suppliedAppConfig()
-    if (supplied) return { app: supplied, persisted: false }
+    const stored = await store.getAppConfig();
+    if (stored) return { app: stored, persisted: true };
+    const supplied = this.#suppliedAppConfig();
+    if (supplied) return { app: supplied, persisted: false };
     throw new Error(
       'Discord app is not configured. Provide botToken, publicKey, and applicationId via the provider `app` option, ' +
         'the DISCORD_BOT_TOKEN / DISCORD_PUBLIC_KEY / DISCORD_APPLICATION_ID env vars, or configure() — ' +
         'Discord applications are created in the Developer Portal, not programmatically.',
-    )
+    );
   }
 
   async #getStore(): Promise<DiscordInstallStore> {
-    if (this.#store) return this.#store
-    const encryptionKey = this.#config.encryptionKey ?? process.env.MASTRA_ENCRYPTION_KEY
-    this.#store = new DiscordInstallStore(await this.#resolveStorage(), encryptionKey)
-    return this.#store
+    if (this.#store) return this.#store;
+    const encryptionKey = this.#config.encryptionKey ?? process.env.MASTRA_ENCRYPTION_KEY;
+    this.#store = new DiscordInstallStore(await this.#resolveStorage(), encryptionKey);
+    return this.#store;
   }
 
   async #resolveStorage(): Promise<ChannelsStorage> {
-    if (this.#config.storage) return this.#config.storage
-    const mastraStore = this.#mastra?.getStorage()
+    if (this.#config.storage) return this.#config.storage;
+    const mastraStore = this.#mastra?.getStorage();
     if (mastraStore) {
       try {
-        await mastraStore.init()
-        const channels = await mastraStore.getStore('channels')
-        if (channels) return channels
+        await mastraStore.init();
+        const channels = await mastraStore.getStore('channels');
+        if (channels) return channels;
       } catch {
         // Fall through to the in-memory store below.
       }
     }
     // No persistent storage available — fall back to in-memory. Installs won't
     // survive a restart; pass `storage` or configure Mastra storage in prod.
-    return new InMemoryChannelsStorage()
+    return new InMemoryChannelsStorage();
   }
 }

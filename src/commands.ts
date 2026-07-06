@@ -1,5 +1,5 @@
-import { createHash } from 'node:crypto'
-import type { DiscordCommand, DiscordCommandInput } from './types'
+import { createHash } from 'node:crypto';
+import type { DiscordCommand, DiscordCommandInput } from './types';
 
 /**
  * Conventional command seed registered when a connect provides none. Discord
@@ -9,7 +9,7 @@ import type { DiscordCommand, DiscordCommandInput } from './types'
  */
 export const DEFAULT_COMMANDS: readonly DiscordCommandInput[] = [
   { name: 'help', description: 'Show what this bot can do' },
-]
+];
 
 /**
  * Map user-supplied commands to Discord `CHAT_INPUT` command shapes, enforcing
@@ -21,22 +21,22 @@ export const DEFAULT_COMMANDS: readonly DiscordCommandInput[] = [
  * @see https://discord.com/developers/docs/interactions/application-commands#application-command-object-application-command-naming
  */
 export function normalizeCommands(raw: readonly DiscordCommandInput[] | undefined): DiscordCommand[] {
-  if (!raw) return []
-  const seen = new Set<string>()
-  const commands: DiscordCommand[] = []
+  if (!raw) return [];
+  const seen = new Set<string>();
+  const commands: DiscordCommand[] = [];
   for (const item of raw) {
-    const input = typeof item === 'string' ? { name: item } : item
+    const input = typeof item === 'string' ? { name: item } : item;
     const name = input.name
       .replace(/^\//, '')
       .toLowerCase()
       .replace(/[^a-z0-9_-]/g, '')
-      .slice(0, 32)
-    if (!name || seen.has(name)) continue
-    seen.add(name)
-    const description = (input.description?.trim() || `Run /${name}`).slice(0, 100)
-    commands.push({ name, description })
+      .slice(0, 32);
+    if (!name || seen.has(name)) continue;
+    seen.add(name);
+    const description = (input.description?.trim() || `Run /${name}`).slice(0, 100);
+    commands.push({ name, description });
   }
-  return commands
+  return commands;
 }
 
 /**
@@ -48,6 +48,6 @@ export function normalizeCommands(raw: readonly DiscordCommandInput[] | undefine
 export function hashCommands(commands: readonly DiscordCommand[]): string {
   const canonical = [...commands]
     .sort((a, b) => a.name.localeCompare(b.name))
-    .map((c) => ({ name: c.name, description: c.description }))
-  return createHash('sha256').update(JSON.stringify(canonical)).digest('hex').slice(0, 16)
+    .map(c => ({ name: c.name, description: c.description }));
+  return createHash('sha256').update(JSON.stringify(canonical)).digest('hex').slice(0, 16);
 }

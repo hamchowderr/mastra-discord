@@ -22,17 +22,17 @@
  * verification, the Gateway (DMs/@mentions), typing keepalive and reply streaming
  * are all handled by the provider + adapter.
  */
-import { Mastra } from '@mastra/core'
-import { Agent } from '@mastra/core/agent'
-import { anthropic } from '@ai-sdk/anthropic'
-import { DiscordProvider } from '@mastra/discord'
+import { Mastra } from '@mastra/core';
+import { Agent } from '@mastra/core/agent';
+import { anthropic } from '@ai-sdk/anthropic';
+import { DiscordProvider } from '@mastra/discord';
 
 const supportAgent = new Agent({
   id: 'support',
   name: 'support',
   instructions: 'You are a concise, friendly support agent. Answer in plain language.',
   model: anthropic('claude-opus-4-8'),
-})
+});
 
 // One app serves every guild. Credentials are read from the DISCORD_* env vars
 // (or pass them via `app: { botToken, publicKey, applicationId }`), and are
@@ -42,12 +42,12 @@ const discord = new DiscordProvider({
   baseUrl: process.env.MASTRA_SERVER_BASE_URL,
   // Persist installs in production (Postgres/libSQL). Defaults to Mastra's
   // channels storage when available, else in-memory (dev only).
-})
+});
 
 export const mastra = new Mastra({
   agents: { support: supportAgent },
   channels: { discord },
-})
+});
 
 // Connect the agent. In an app this is usually triggered from the editor UI or an
 // admin route; here we do it inline for illustration.
@@ -58,18 +58,18 @@ async function main() {
     guildId: process.env.DISCORD_GUILD_ID,
     // Defaults to a single `/help` command when omitted.
     commands: ['/help', { name: 'ask', description: 'Ask a question' }],
-  })
+  });
 
   if (result.type === 'oauth') {
     // Discord "install" is a bot invite — open this URL and pick a server.
-    console.log('Invite the bot:', result.authorizationUrl)
+    console.log('Invite the bot:', result.authorizationUrl);
   } else {
-    console.log('Bound immediately:', result) // { type: 'immediate', installationId: '...' }
+    console.log('Bound immediately:', result); // { type: 'immediate', installationId: '...' }
   }
-  console.log('installations:', await discord.listInstallations())
+  console.log('installations:', await discord.listInstallations());
 }
 
-main().catch((err) => {
-  console.error(err)
-  process.exitCode = 1
-})
+main().catch(err => {
+  console.error(err);
+  process.exitCode = 1;
+});

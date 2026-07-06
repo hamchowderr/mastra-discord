@@ -3,11 +3,11 @@ import {
   DEFAULT_INVITE_SCOPES,
   DISCORD_API_BASE_URL,
   DISCORD_OAUTH_AUTHORIZE_URL,
-} from './types'
-import type { DiscordCommand } from './types'
+} from './types';
+import type { DiscordCommand } from './types';
 
 /** `CHAT_INPUT` (slash) application command type. */
-const APPLICATION_COMMAND_TYPE_CHAT_INPUT = 1
+const APPLICATION_COMMAND_TYPE_CHAT_INPUT = 1;
 
 /**
  * The subset of Discord's application object the control plane reads back from
@@ -16,15 +16,15 @@ const APPLICATION_COMMAND_TYPE_CHAT_INPUT = 1
  */
 export interface DiscordApplication {
   /** The application (client) id. */
-  id: string
+  id: string;
   /** The application's name. */
-  name: string
+  name: string;
 }
 
 /** Minimal Discord REST error envelope. */
 interface DiscordErrorBody {
-  message?: string
-  code?: number
+  message?: string;
+  code?: number;
 }
 
 /**
@@ -51,18 +51,18 @@ export async function discordRequest(
       ...(body !== undefined ? { 'content-type': 'application/json' } : {}),
     },
     ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
-  }
+  };
   try {
-    return await fetch(`${apiBaseUrl}${path}`, init)
+    return await fetch(`${apiBaseUrl}${path}`, init);
   } catch (cause) {
-    throw new Error(`Discord ${method} ${path} request failed`, { cause })
+    throw new Error(`Discord ${method} ${path} request failed`, { cause });
   }
 }
 
 /** Read a Discord error description from a non-2xx response, best-effort. */
 async function describeError(response: Response): Promise<string> {
-  const body = (await response.json().catch(() => null)) as DiscordErrorBody | null
-  return body?.message ?? `HTTP ${response.status}`
+  const body = (await response.json().catch(() => null)) as DiscordErrorBody | null;
+  return body?.message ?? `HTTP ${response.status}`;
 }
 
 /**
@@ -75,15 +75,15 @@ export async function validateApp(
   botToken: string,
   apiBaseUrl: string = DISCORD_API_BASE_URL,
 ): Promise<DiscordApplication> {
-  const response = await discordRequest(botToken, 'GET', '/applications/@me', apiBaseUrl)
+  const response = await discordRequest(botToken, 'GET', '/applications/@me', apiBaseUrl);
   if (!response.ok) {
-    throw new Error(`Discord rejected the bot token: ${await describeError(response)}`)
+    throw new Error(`Discord rejected the bot token: ${await describeError(response)}`);
   }
-  const app = (await response.json()) as DiscordApplication
+  const app = (await response.json()) as DiscordApplication;
   if (!app?.id) {
-    throw new Error('Discord /applications/@me returned no application id')
+    throw new Error('Discord /applications/@me returned no application id');
   }
-  return app
+  return app;
 }
 
 /**
@@ -98,19 +98,19 @@ export async function guildHealthCheck(
   guildId: string,
   apiBaseUrl: string = DISCORD_API_BASE_URL,
 ): Promise<boolean> {
-  const response = await discordRequest(botToken, 'GET', `/guilds/${guildId}`, apiBaseUrl)
+  const response = await discordRequest(botToken, 'GET', `/guilds/${guildId}`, apiBaseUrl);
   // Drain the body so the connection can be reused (undici keep-alive).
-  await response.body?.cancel().catch(() => {})
-  return response.ok
+  await response.body?.cancel().catch(() => {});
+  return response.ok;
 }
 
 /** Map normalized commands to the Discord bulk-overwrite `CHAT_INPUT` payload. */
 function toCommandPayload(commands: readonly DiscordCommand[]) {
-  return commands.map((c) => ({
+  return commands.map(c => ({
     name: c.name,
     description: c.description,
     type: APPLICATION_COMMAND_TYPE_CHAT_INPUT,
-  }))
+  }));
 }
 
 /**
@@ -127,12 +127,12 @@ export async function registerGuildCommands(
   commands: readonly DiscordCommand[],
   apiBaseUrl: string = DISCORD_API_BASE_URL,
 ): Promise<void> {
-  const path = `/applications/${applicationId}/guilds/${guildId}/commands`
-  const response = await discordRequest(botToken, 'PUT', path, apiBaseUrl, toCommandPayload(commands))
+  const path = `/applications/${applicationId}/guilds/${guildId}/commands`;
+  const response = await discordRequest(botToken, 'PUT', path, apiBaseUrl, toCommandPayload(commands));
   if (!response.ok) {
-    throw new Error(`Discord guild command registration failed: ${await describeError(response)}`)
+    throw new Error(`Discord guild command registration failed: ${await describeError(response)}`);
   }
-  await response.body?.cancel().catch(() => {})
+  await response.body?.cancel().catch(() => {});
 }
 
 /**
@@ -148,22 +148,22 @@ export async function registerGlobalCommands(
   commands: readonly DiscordCommand[],
   apiBaseUrl: string = DISCORD_API_BASE_URL,
 ): Promise<void> {
-  const path = `/applications/${applicationId}/commands`
-  const response = await discordRequest(botToken, 'PUT', path, apiBaseUrl, toCommandPayload(commands))
+  const path = `/applications/${applicationId}/commands`;
+  const response = await discordRequest(botToken, 'PUT', path, apiBaseUrl, toCommandPayload(commands));
   if (!response.ok) {
-    throw new Error(`Discord global command registration failed: ${await describeError(response)}`)
+    throw new Error(`Discord global command registration failed: ${await describeError(response)}`);
   }
-  await response.body?.cancel().catch(() => {})
+  await response.body?.cancel().catch(() => {});
 }
 
 /** Inputs for {@link buildInviteUrl}. */
 export interface BuildInviteUrlOptions {
   /** The application (client) id — becomes `client_id`. */
-  applicationId: string
+  applicationId: string;
   /** Permissions bitfield (bigint or decimal string). Defaults to {@link DEFAULT_INVITE_PERMISSIONS}. */
-  permissions?: bigint | string
+  permissions?: bigint | string;
   /** OAuth2 scopes. Defaults to {@link DEFAULT_INVITE_SCOPES} (`bot applications.commands`). */
-  scopes?: readonly string[]
+  scopes?: readonly string[];
 }
 
 /**
@@ -174,11 +174,11 @@ export interface BuildInviteUrlOptions {
  * @see https://discord.com/developers/docs/topics/oauth2#bot-authorization-flow
  */
 export function buildInviteUrl(options: BuildInviteUrlOptions): string {
-  const permissions = (options.permissions ?? DEFAULT_INVITE_PERMISSIONS).toString()
-  const scopes = options.scopes ?? DEFAULT_INVITE_SCOPES
-  const url = new URL(DISCORD_OAUTH_AUTHORIZE_URL)
-  url.searchParams.set('client_id', options.applicationId)
-  url.searchParams.set('scope', scopes.join(' '))
-  url.searchParams.set('permissions', permissions)
-  return url.toString()
+  const permissions = (options.permissions ?? DEFAULT_INVITE_PERMISSIONS).toString();
+  const scopes = options.scopes ?? DEFAULT_INVITE_SCOPES;
+  const url = new URL(DISCORD_OAUTH_AUTHORIZE_URL);
+  url.searchParams.set('client_id', options.applicationId);
+  url.searchParams.set('scope', scopes.join(' '));
+  url.searchParams.set('permissions', permissions);
+  return url.toString();
 }
