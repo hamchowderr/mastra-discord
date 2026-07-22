@@ -15,7 +15,7 @@ import {
   isEncrypted,
   normalizeCommands,
   resolveDiscordAdapterConfig,
-} from '../src/index';
+} from './index';
 
 const API_ORIGIN = 'https://discord.com';
 const APP = {
