@@ -4,3 +4,6 @@ dist/
 .env
 .env.local
 .DS_Store
+
+# Beads export (disposable; kept fresh via export.auto). Source of truth = Dolt DB. cp-uif3.1
+.beads/issues.jsonl
