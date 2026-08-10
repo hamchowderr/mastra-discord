@@ -103,6 +103,10 @@ export class DiscordProvider implements ChannelProvider {
       this.#initPromise = null;
       this.#store = undefined;
       this.#adapters.clear();
+      // The store-derived half of #configured belongs to the old instance; only
+      // credentials supplied via config/env survive a re-attach. Without this,
+      // getInfo() can report a stale isConfigured before initialize() re-runs.
+      this.#configured = this.#suppliedAppConfig() != null;
     }
     this.#mastra = mastra;
   }
@@ -203,10 +207,26 @@ export class DiscordProvider implements ChannelProvider {
       await store.deleteAppConfig();
       this.#config = { ...this.#config, app: undefined };
       this.#configured = false;
+      // Live adapters still hold the app credentials that were just revoked.
+      this.#adapters.clear();
+      this.#initPromise = null;
       return;
     }
-    this.#config = { ...this.#config, app: { ...this.#config.app, ...credentials } };
+    const previous = this.#config.app;
+    this.#config = { ...this.#config, app: { ...previous, ...credentials } };
     this.#configured = this.#suppliedAppConfig() != null || this.#configured;
+
+    // An adapter captures botToken / publicKey / applicationId at construction,
+    // so cached ones keep verifying Ed25519 against the *old* public key and
+    // authenticating with the *old* bot token. Rebuild them when any changes.
+    const changed = (['botToken', 'publicKey', 'applicationId'] as const).some(
+      k => credentials[k] !== undefined && credentials[k] !== previous?.[k],
+    );
+    if (!changed) return;
+    const wasInitialized = this.#initPromise !== null;
+    this.#adapters.clear();
+    this.#initPromise = null;
+    if (wasInitialized) await this.initialize();
   }
 
   /**

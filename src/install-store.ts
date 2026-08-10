@@ -1,7 +1,7 @@
 import type { ChannelInstallationInfo } from '@mastra/core/channels';
 import type { ChannelInstallation, ChannelsStorage } from '@mastra/core/storage';
 import type { DiscordAppConfig, DiscordCommand, DiscordInstallation } from './types';
-import { decrypt, encrypt } from './crypto';
+import { decrypt, encrypt, isEncrypted } from './crypto';
 
 /** Platform identifier used for every stored record, config, and route. */
 export const PLATFORM = 'discord';
@@ -118,7 +118,19 @@ export class DiscordInstallStore {
   }
 
   #dec(value: string | undefined): string | undefined {
-    return value && this.encryptionKey ? decrypt(value, this.encryptionKey) : value;
+    if (!value) return value;
+    if (!this.encryptionKey) {
+      // A deployment that stored an encrypted token and later lost its key would
+      // otherwise hand the ciphertext to Discord as a bot token — surfacing as
+      // opaque 401s instead of the configuration error it actually is.
+      if (isEncrypted(value)) {
+        throw new Error(
+          'The stored Discord bot token is encrypted at rest, but no encryption key is configured. Set `encryptionKey` on DiscordProvider or MASTRA_ENCRYPTION_KEY.',
+        );
+      }
+      return value;
+    }
+    return decrypt(value, this.encryptionKey);
   }
 
   #toRecord(install: DiscordInstallation): ChannelInstallation {

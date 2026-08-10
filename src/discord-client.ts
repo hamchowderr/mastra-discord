@@ -9,6 +9,9 @@ import type { DiscordCommand } from './types';
 /** `CHAT_INPUT` (slash) application command type. */
 const APPLICATION_COMMAND_TYPE_CHAT_INPUT = 1;
 
+/** Per-request ceiling for control-plane calls, so a hung API can't stall the provider. */
+const REQUEST_TIMEOUT_MS = 10_000;
+
 /**
  * The subset of Discord's application object the control plane reads back from
  * `GET /applications/@me`.
@@ -53,7 +56,10 @@ export async function discordRequest(
     ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
   };
   try {
-    return await fetch(`${apiBaseUrl}${path}`, init);
+    // Bound every control-plane call: without a timeout a hung Discord API
+    // blocks connect()/disconnect()/#registerCommands() indefinitely, since no
+    // call site in discord-provider.ts imposes one of its own.
+    return await fetch(`${apiBaseUrl}${path}`, { ...init, signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) });
   } catch (cause) {
     throw new Error(`Discord ${method} ${path} request failed`, { cause });
   }

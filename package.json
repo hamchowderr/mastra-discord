@@ -33,10 +33,10 @@
     "test:watch": "vitest"
   },
   "dependencies": {
-    "@chat-adapter/discord": "^4.32.0"
+    "@chat-adapter/discord": "4.34.0"
   },
   "peerDependencies": {
-    "@mastra/core": "^1.22.0"
+    "@mastra/core": ">=1.22.0 <2.0.0"
   },
   "devDependencies": {
     "@mastra/core": "^1.49.0",

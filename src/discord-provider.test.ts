@@ -7,6 +7,7 @@ import { Agent } from '@mastra/core/agent';
 import { createMockModel } from '@mastra/core/test-utils/llm-mock';
 import {
   DEFAULT_COMMANDS,
+  DiscordInstallStore,
   DiscordProvider,
   buildInviteUrl,
   decrypt,
@@ -447,6 +448,84 @@ describe('crypto (bot-token at rest)', () => {
     expect(isEncrypted(enc)).toBe(true);
     expect(decrypt(enc, 'pass')).toBe(APP.botToken);
     expect(decrypt(APP.botToken, 'pass')).toBe(APP.botToken);
+  });
+});
+
+describe('DiscordInstallStore — encryption key lifecycle', () => {
+  it('round-trips the bot token through storage when keyed', async () => {
+    const storage = new InMemoryChannelsStorage();
+    await new DiscordInstallStore(storage, 'pass').saveAppConfig(APP);
+
+    // Stored ciphertext, not the token.
+    const raw = (await storage.getConfig('discord'))?.data as { botToken: string };
+    expect(isEncrypted(raw.botToken)).toBe(true);
+    expect(raw.botToken).not.toContain(APP.botToken);
+
+    expect(await new DiscordInstallStore(storage, 'pass').getAppConfig()).toEqual(APP);
+  });
+
+  it('throws a configuration error rather than returning ciphertext when the key is lost', async () => {
+    const storage = new InMemoryChannelsStorage();
+    await new DiscordInstallStore(storage, 'pass').saveAppConfig(APP);
+
+    // Same storage, no key — e.g. MASTRA_ENCRYPTION_KEY dropped from the env.
+    // Without the guard this returns ciphertext, which is then sent to Discord
+    // as a bot token and surfaces as an opaque 401.
+    await expect(new DiscordInstallStore(storage, undefined).getAppConfig()).rejects.toThrow(/no encryption key/i);
+  });
+
+  it('still reads plaintext values written without a key', async () => {
+    const storage = new InMemoryChannelsStorage();
+    await new DiscordInstallStore(storage, undefined).saveAppConfig(APP);
+    expect(await new DiscordInstallStore(storage, undefined).getAppConfig()).toEqual(APP);
+  });
+});
+
+describe('DiscordProvider.configure — cache invalidation', () => {
+  it('drops adapters built on superseded credentials', async () => {
+    const { provider } = makeProvider();
+    stubValidateApp();
+    stubGuild(GUILD, true);
+    stubGuildCommands(GUILD);
+    await provider.connect('agent-1', { guildId: GUILD });
+
+    const install = await provider.getInstallation('agent-1');
+    const before = provider.getAdapter(install!.id);
+    expect(before).toBeDefined();
+
+    // A rotated public key must not leave an adapter verifying Ed25519 against
+    // the old one (nor authenticating with the old bot token).
+    await provider.configure({ publicKey: 'fedcba9876543210' });
+    expect(provider.getAdapter(install!.id)).not.toBe(before);
+  });
+
+  it('keeps adapters when the credentials are unchanged', async () => {
+    const { provider } = makeProvider();
+    stubValidateApp();
+    stubGuild(GUILD, true);
+    stubGuildCommands(GUILD);
+    await provider.connect('agent-1', { guildId: GUILD });
+
+    const install = await provider.getInstallation('agent-1');
+    const before = provider.getAdapter(install!.id);
+
+    await provider.configure({ publicKey: APP.publicKey });
+    expect(provider.getAdapter(install!.id)).toBe(before);
+  });
+
+  it('drops adapters when the app config is cleared', async () => {
+    const { provider } = makeProvider();
+    stubValidateApp();
+    stubGuild(GUILD, true);
+    stubGuildCommands(GUILD);
+    await provider.connect('agent-1', { guildId: GUILD });
+
+    const install = await provider.getInstallation('agent-1');
+    expect(provider.getAdapter(install!.id)).toBeDefined();
+
+    await provider.configure(null);
+    expect(provider.getAdapter(install!.id)).toBeUndefined();
+    expect(provider.isConfigured()).toBe(false);
   });
 });
 

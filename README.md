@@ -78,6 +78,18 @@ For each adapter with `gateway !== false` (default `true`), `@mastra/core` owns 
 
 Because core owns the loop (there is no `stopGatewayListener`), `disconnect()` removes the install row and drops the adapter entry but **cannot** kill an in-flight Gateway window — it lapses at the next duration boundary.
 
+### Known caveat: reactions on a thread's starter message
+
+An @mention that opens a **new thread** gives that thread an id equal to the starter message's id. `@chat-adapter/discord` (through `4.34.0`) reacts against `threadId || channelId`, so the acknowledgement reaction is `PUT`ed to `/channels/{threadId}/messages/{messageId}/reactions/…` and Discord answers **404 `Unknown Message` (code 10008)** — the starter message is not a message *inside* the thread. Because the reaction is awaited before the reply, that aborts the response.
+
+This is in the protocol adapter, not this provider. Until it is fixed upstream, pass `tools: false` if your agents are mentioned into new threads and you would rather lose the reaction tools than the reply:
+
+```ts
+const discord = new DiscordProvider({ app, tools: false });
+```
+
+DMs are unaffected (no thread is created).
+
 ## Commands
 
 Slash commands default to a single `/help` seed. Override per agent or provider-wide:
@@ -110,7 +122,7 @@ The deferred type-5 ACK is sent synchronously inside the 3-second window; the ag
 | `app` | `DISCORD_*` env | `{ botToken, publicKey, applicationId }`. Persisted once to channels storage. |
 | `baseUrl` | Mastra server config | Public HTTPS base for the interactions endpoint. |
 | `storage` | Mastra channels storage, else in-memory | Install persistence (`ChannelsStorage`). |
-| `encryptionKey` | `MASTRA_ENCRYPTION_KEY` env | Encrypt the stored `botToken` at rest (AES-256-GCM). |
+| `encryptionKey` | `MASTRA_ENCRYPTION_KEY` env | Encrypts the stored `botToken` at rest with AES-256-GCM when set; otherwise it is stored in plaintext. |
 | `apiBaseUrl` | `https://discord.com/api/v10` | Override the REST origin (e.g. a test mock). |
 | `permissions` | read/reply/embed/react bitfield | Invite-URL permissions (`bigint` or decimal string). |
 | `commands` | `/help` | Default command seed. |
