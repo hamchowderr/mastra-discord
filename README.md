@@ -80,15 +80,11 @@ Because core owns the loop (there is no `stopGatewayListener`), `disconnect()` r
 
 ### Known caveat: reactions on a thread's starter message
 
-An @mention that opens a **new thread** gives that thread an id equal to the starter message's id. `@chat-adapter/discord` (through `4.34.0`) reacts against `threadId || channelId`, so the acknowledgement reaction is `PUT`ed to `/channels/{threadId}/messages/{messageId}/reactions/…` and Discord answers **404 `Unknown Message` (code 10008)** — the starter message is not a message *inside* the thread. Because the reaction is awaited before the reply, that aborts the response.
+An @mention in a channel opens a **new thread**, and Discord gives that thread an id equal to the starter message's id. `@chat-adapter/discord` (through `4.37.0`, the current release) resolves a reaction's target channel as `threadId || channelId`, so it `PUT`s to `/channels/{threadId}/messages/{messageId}/reactions/…` and Discord answers **404 `Unknown Message` (code 10008)** — the starter message is not a message *inside* the thread, it is the message the thread hangs off.
 
-This is in the protocol adapter, not this provider. Until it is fixed upstream, pass `tools: false` if your agents are mentioned into new threads and you would rather lose the reaction tools than the reply:
+Effect: an `add_reaction` on that message does not appear, and the 404 is logged. **Replies are unaffected** — `AgentChannels` suppresses `tool-error` chunks for its own channel tools, so the agent's response still posts. Pass `tools: false` to stop offering the reaction tools if the logged errors are noise for you.
 
-```ts
-const discord = new DiscordProvider({ app, tools: false });
-```
-
-DMs are unaffected (no thread is created).
+This is in the protocol adapter, not this provider.
 
 ## Commands
 
